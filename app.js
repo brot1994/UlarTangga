@@ -395,8 +395,8 @@
     if (!key) return Promise.reject(new Error('API key Gemini belum diisi'));
     var model = LS.get('geminiModel', '') || CFG.GEMINI_MODEL;
     var gc = { temperature: asJson ? 0.9 : 0.8 }; if (asJson) gc.responseMimeType = 'application/json';
-    return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+    return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: gc })
     }).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status)); return j; }); })
       .then(function (j) {
@@ -430,11 +430,21 @@
       '<label class="row card" style="min-height:52px"><input type="checkbox" id="sSound" style="width:22px;height:22px"' + (S.sound ? ' checked' : '') + '> <span>Suara efek</span></label>' +
       '<div class="card" style="display:flex;flex-direction:column;gap:8px"><b>Tema pakai AI (Gemini)</b><span style="font-size:13px;color:#4A5468">Buat API key gratis di <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> (login akun Google), lalu tempel di sini. Key hanya disimpan di HP ini.</span>' +
       '<label class="sr" for="sKey">API key Gemini</label><input class="input" id="sKey" type="password" autocomplete="off" placeholder="Tempel API key" value="' + esc(LS.get('gemini', '')) + '">' +
+      '<button class="btn small dark" id="sTest" type="button">Tes key</button><span id="sTestRes" style="font-size:13px;font-weight:700"></span>' +
       '<label style="font-size:13px;font-weight:700" for="sModel">Model (biarkan kosong untuk bawaan: ' + esc(CFG.GEMINI_MODEL) + ')</label><input class="input" id="sModel" placeholder="' + esc(CFG.GEMINI_MODEL) + '" value="' + esc(LS.get('geminiModel', '')) + '"></div>' +
       '<button class="btn" id="sSave">Simpan</button></div>';
     document.body.appendChild(m);
     function close() { m.remove(); }
     $('#sClose', m).onclick = close; m.onclick = function (e) { if (e.target === m) close(); };
+    $('#sTest', m).onclick = function () {
+      var res = $('#sTestRes', m), oldK = LS.get('gemini', ''), oldM = LS.get('geminiModel', '');
+      LS.set('gemini', $('#sKey', m).value.trim()); LS.set('geminiModel', $('#sModel', m).value.trim());
+      res.style.color = '#4A5468'; res.textContent = 'Mengetes…';
+      geminiRequest('Balas dengan satu kata saja: siap', false)
+        .then(function (t) { res.style.color = '#1F8A5B'; res.textContent = 'Berhasil! Gemini menjawab: ' + t.slice(0, 40); })
+        .catch(function (e) { res.style.color = '#C62828'; res.textContent = 'Gagal: ' + String(e.message || e).slice(0, 140); })
+        .then(function () { LS.set('gemini', oldK); LS.set('geminiModel', oldM); });
+    };
     $('#sSave', m).onclick = function () { S.sound = $('#sSound', m).checked; saveS(); LS.set('gemini', $('#sKey', m).value.trim()); LS.set('geminiModel', $('#sModel', m).value.trim()); toast('Tersimpan'); close(); };
   }
 
