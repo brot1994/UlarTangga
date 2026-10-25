@@ -460,7 +460,7 @@
       '<label class="sr" for="sKey">API key Gemini</label><input class="input" id="sKey" type="password" autocomplete="off" placeholder="Tempel API key" value="' + esc(LS.get('gemini', '')) + '">' +
       '<button class="btn small dark" id="sTest" type="button">Tes key</button><span id="sTestRes" style="font-size:13px;font-weight:700"></span>' +
       '<label style="font-size:13px;font-weight:700" for="sModel">Model (biarkan kosong: game memilih model Flash terbaru otomatis)</label><input class="input" id="sModel" placeholder="' + esc(CFG.GEMINI_MODEL) + '" value="' + esc(LS.get('geminiModel', '')) + '"></div>' +
-      '<button class="btn" id="sSave">Simpan</button><span style="font-size:11px;color:var(--muted);text-align:center">Versi game: 20261025d</span></div>';
+      '<button class="btn" id="sSave">Simpan</button><span style="font-size:11px;color:var(--muted);text-align:center">Versi game: 20261025e</span></div>';
     document.body.appendChild(m);
     function close() { m.remove(); }
     $('#sClose', m).onclick = close; m.onclick = function (e) { if (e.target === m) close(); };
@@ -551,7 +551,6 @@
     var ps = roomPlayers(d), max = d.max || 6;
     h += '<div style="background:#23304A;color:#fff;border-radius:20px;padding:18px;display:flex;flex-direction:column;align-items:center;gap:6px"><span style="font-size:13px;font-weight:700;color:#C9D1E3">Kode room — bagikan ke teman</span><span style="font-family:var(--display);font-weight:800;font-size:52px;letter-spacing:.08em;line-height:1.1">' + esc(R.code) + '</span>' +
       '<div class="row"><button class="btn small white" id="lCopy">Salin link</button><a class="btn small" style="display:inline-flex;align-items:center;text-decoration:none;background:#1F9D55" target="_blank" rel="noopener" href="https://wa.me/?text=' + encodeURIComponent('Ayo main Ular Tangga! Kode room ' + R.code + ': ' + shareLink()) + '">Kirim ke WA</a></div></div>';
-    if (notifSupported() && Notification.permission !== 'granted') h += '<button class="btn ghost" id="lNotif">🔔 Nyalakan notifikasi giliran</button>';
     h += '<button class="theme-card" id="lTheme"' + (G.isHost ? '' : ' disabled style="opacity:1"') + '>' + themeThumb(theme) + '<div class="grow"><b>' + esc(theme.name) + '</b><span>' + ({ klasik: 'Susunan klasik', santai: 'Santai, banyak tangga', tegang: 'Tegang, banyak ular', acak: 'Acak tapi adil' }[st.layoutType] || '') + (G.isHost ? ' · ketuk untuk ganti' : '') + '</span></div></button>';
     h += '<div class="row" style="justify-content:space-between"><span class="label">Pemain di room</span><b>' + ps.length + ' / ' + max + '</b></div><div class="plist">';
     ps.forEach(function (p, i) {
@@ -570,7 +569,6 @@
     app.innerHTML = h;
     $('#lBack').onclick = function () { leaveRoom(); };
     $('#lCopy').onclick = function () { copyText(shareLink()); };
-    var ln = $('#lNotif'); if (ln) ln.onclick = askNotif;
     $$('[data-kick]').forEach(function (b) { b.onclick = function () { db('rooms/' + R.code + '/players/' + b.dataset.kick, 'DELETE').catch(function () { }); }; });
     var lb = $('#lBot'); if (lb) lb.onclick = function () { var n = ps.filter(function (p) { return p.bot; }).length + 1; db('rooms/' + R.code + '/players/bot' + Date.now().toString(36), 'PUT', { name: 'Bot ' + n, bot: true, joined: TS }).catch(function (e) { toast(e.message); }); };
     var ls = $('#lStart'); if (ls) ls.onclick = hostStart;
@@ -711,40 +709,35 @@
     var mineNow = turnUid(g) === me.uid, prev = G.lastTurnUid; G.lastTurnUid = turnUid(g);
     if (!mineNow || prev === me.uid) return;
     G.pendingTurnAlert = true;
-    if (document.hidden) systemNotify('🎲 Giliran kamu!', 'Ayo kocok dadu di room ' + R.code + '.');
+    if (document.hidden) blinkTitle(true);
   }
+  // notifikasi halus: tombol dadu berdenyut sebentar; kalau tab sedang tidak dilihat, judul & ikon tab berkedip
   function turnAlertNow() {
     G.pendingTurnAlert = false;
-    beep(660, 0.12, 'triangle', 0.15); beep(990, 0.18, 'triangle', 0.15, 0.13); beep(1320, 0.22, 'triangle', 0.12, 0.28);
-    buzz([200, 100, 200]);
-    var b = document.createElement('div'); b.className = 'turn-banner'; b.innerHTML = '🎲 Giliran kamu!'; document.body.appendChild(b);
-    setTimeout(function () { b.classList.add('out'); }, 2200); setTimeout(function () { b.remove(); }, 2700);
     var r = $('#gRoll'); if (r) { r.classList.remove('nudge'); void r.offsetWidth; r.classList.add('nudge'); }
     if (document.hidden) blinkTitle(true);
   }
-  var titleT = null, baseTitle = document.title;
+  var titleT = null, baseTitle = document.title, iconEl = document.querySelector('link[rel=icon]'), baseIcon = iconEl ? iconEl.href : '', dotIcon = '';
+  function makeDotIcon() {
+    if (dotIcon || !iconEl) return dotIcon;
+    try {
+      var c = document.createElement('canvas'); c.width = c.height = 64; var x = c.getContext('2d'), im = new Image();
+      im.onload = function () { x.drawImage(im, 0, 0, 64, 64); x.beginPath(); x.arc(50, 14, 13, 0, 7); x.fillStyle = '#E04A3F'; x.fill(); x.lineWidth = 3; x.strokeStyle = '#fff'; x.stroke(); dotIcon = c.toDataURL('image/png'); };
+      im.src = baseIcon;
+    } catch (e) { }
+    return dotIcon;
+  }
+  makeDotIcon();
   function blinkTitle(on) {
-    clearInterval(titleT); document.title = baseTitle; if (!on) return;
-    var k = 0; titleT = setInterval(function () { document.title = (k++ % 2) ? baseTitle : '🎲 Giliran kamu!'; }, 1000);
+    clearInterval(titleT); document.title = baseTitle; if (iconEl) iconEl.href = baseIcon;
+    if (!on) return;
+    var k = 0; titleT = setInterval(function () {
+      var alt = k++ % 2 === 0; document.title = alt ? '🎲 Giliran kamu!' : baseTitle;
+      if (iconEl && dotIcon) iconEl.href = alt ? dotIcon : baseIcon;
+    }, 1000);
   }
   document.addEventListener('visibilitychange', function () { if (!document.hidden) blinkTitle(false); });
-  var swReg = null;
-  if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').then(function (r) { swReg = r; }).catch(function () { }); }
-  function notifSupported() { return 'Notification' in window && 'serviceWorker' in navigator; }
-  function askNotif() {
-    if (!notifSupported()) { toast('Browser ini belum mendukung notifikasi. Di iPhone: tambahkan game ke Layar Utama dulu.', 4500); return; }
-    Notification.requestPermission().then(function (p) {
-      if (p === 'granted') { toast('Notifikasi giliran nyala'); systemNotify('Notifikasi aktif', 'Kamu akan diberi tahu saat giliranmu.'); }
-      else toast('Notifikasi tidak diizinkan. Bisa diubah di pengaturan situs browser.', 4000);
-      if (current === 'lobby') renderLobby();
-    });
-  }
-  function systemNotify(title, body) {
-    if (!notifSupported() || Notification.permission !== 'granted') return;
-    var opt = { body: body, tag: 'ut-turn', renotify: true, vibrate: [200, 100, 200], icon: 'icon.png', badge: 'icon.png' };
-    (swReg ? Promise.resolve(swReg) : navigator.serviceWorker.ready).then(function (r) { return r.showNotification(title, opt); })
-      .catch(function () { try { new Notification(title, opt); } catch (e) { } });
-  }
+
   function pump() {
     if (G.busy) return; G.busy = true; updateControls(); placeTokens();
     (function next() {
@@ -805,7 +798,6 @@
       '<button class="btn ghost" data-a="sound">Suara: ' + (S.sound ? 'nyala' : 'mati') + '</button>' +
       (canRestart ? '<button class="btn ghost" data-a="restart">Main ulang dari awal</button>' : '') +
       (online() ? '<button class="btn ghost" data-a="share">Salin link room</button>' : '') +
-      (online() && notifSupported() && Notification.permission !== 'granted' ? '<button class="btn ghost" data-a="notif">🔔 Nyalakan notifikasi giliran</button>' : '') +
       '<button class="btn ghost" data-a="exit">' + (online() ? 'Keluar dari room' : 'Ke menu utama') + '</button></div>';
     document.body.appendChild(m);
     m.onclick = function (e) {
@@ -813,7 +805,6 @@
       var act = a.dataset.a; m.remove();
       if (act === 'video') { var u = prompt('Tempel link YouTube / TikTok / Instagram:'); if (u) { var v = parseVideo(u); if (v) openVideo(v, me.name || 'Kamu'); else toast('Link video tidak dikenali'); } }
       else if (act === 'settings') showSettings();
-      else if (act === 'notif') askNotif();
       else if (act === 'sound') { S.sound = !S.sound; saveS(); toast('Suara ' + (S.sound ? 'nyala' : 'mati')); }
       else if (act === 'restart') { if (confirm('Mulai ulang permainan?')) restartGame(); }
       else if (act === 'share') copyText(shareLink());
