@@ -39,6 +39,8 @@
     max: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>',
     spark: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F7C548" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>',
     ladder: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1F8A5B" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 21V3M17 21V3M7 8h10M7 14h10"/></svg>',
+    palette: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.8 1.6-1.6 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4-4-7.4-9-7.4z"/><circle cx="7.5" cy="11" r="1.2" fill="currentColor"/><circle cx="10.5" cy="7" r="1.2" fill="currentColor"/><circle cx="15.5" cy="7.5" r="1.2" fill="currentColor"/></svg>',
+    gem: '<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c.6 5.4 4.6 9.4 10 10-5.4.6-9.4 4.6-10 10-.6-5.4-4.6-9.4-10-10 5.4-.6 9.4-4.6 10-10z" fill="currentColor"/></svg>',
     info: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2F6FD6" stroke-width="2.3" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>'
   };
 
@@ -388,26 +390,36 @@
     draw();
   }
 
-  function aiTheme(text, btn, cb) {
+  function geminiRequest(prompt, asJson) {
     var key = LS.get('gemini', '');
-    if (!key) { toast('Isi API key Gemini dulu di Pengaturan'); showSettings(); return; }
+    if (!key) return Promise.reject(new Error('API key Gemini belum diisi'));
     var model = LS.get('geminiModel', '') || CFG.GEMINI_MODEL;
-    var old = btn.innerHTML; btn.disabled = true; btn.textContent = 'AI sedang membuat…';
-    var prompt = 'Kamu desainer papan permainan ular tangga anak-anak dan keluarga. Buat tema papan untuk: "' + text + '".\n' +
-      'Balas HANYA JSON dengan bentuk:\n{"name":"nama papan (maks 30 huruf, bahasa Indonesia)","ladderName":"tangga diganti jadi benda apa (maks 20 huruf)","snakeName":"ular diganti jadi apa (maks 20 huruf)",' +
-      '"c":{"page":"#hex latar halaman","a":"#hex kotak papan 1","b":"#hex kotak papan 2","num":"#hex angka di kotak (kontras dengan a dan b)","start":"#hex kotak 1","finish":"#hex kotak 100","rail":"#hex tangga (kontras dengan a dan b)","rung":"#hex","body":"#hex badan ular (kontras dengan a dan b)","pattern":"#hex corak ular","accent":"#hex tombol utama (teks putih harus terbaca)"},' +
-      '"lIcon":"1 emoji di ujung atas tangga","sIcon":"1 emoji kepala ular atau kosong","decor":["4-6 emoji hiasan"]}\n' +
-      'Warna a dan b mirip tapi beda sedikit. Semua warna format #RRGGBB.';
-    fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key), {
+    var gc = { temperature: asJson ? 0.9 : 0.8 }; if (asJson) gc.responseMimeType = 'application/json';
+    return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0.9 } })
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: gc })
     }).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status)); return j; }); })
       .then(function (j) {
-        var txt = j.candidates[0].content.parts.map(function (p) { return p.text || ''; }).join('');
-        txt = txt.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
-        var t = TH.sanitizeTheme(JSON.parse(txt)); t.id = 'ai';
-        toast('Tema AI siap: ' + t.name); cb(t);
-      })
+        var c = j.candidates && j.candidates[0];
+        if (!c || !c.content || !c.content.parts) throw new Error(j.promptFeedback && j.promptFeedback.blockReason ? 'ditolak filter Gemini' : 'jawaban kosong');
+        return c.content.parts.map(function (p) { return p.text || ''; }).join('').trim();
+      });
+  }
+  function aiThemeRaw(text) {
+    var prompt = 'Kamu desainer papan permainan ular tangga anak-anak dan keluarga. Buat tema papan untuk: "' + String(text).slice(0, 80) + '".\n' +
+      'Balas HANYA JSON dengan bentuk:\n{"name":"nama papan (maks 30 huruf, bahasa Indonesia)","ladderName":"tangga diganti jadi benda apa (maks 20 huruf)","snakeName":"ular diganti jadi apa (maks 20 huruf)",' +
+      '"c":{"page":"#hex latar halaman","a":"#hex kotak papan 1","b":"#hex kotak papan 2","num":"#hex angka di kotak (kontras dengan a dan b)","start":"#hex kotak 1","finish":"#hex kotak 100","rail":"#hex tangga (kontras dengan a dan b)","rung":"#hex","body":"#hex badan ular (kontras dengan a, b, dan rail)","pattern":"#hex corak ular","accent":"#hex tombol utama (teks putih harus terbaca)"},' +
+      '"lIcon":"1 emoji di ujung atas tangga","sIcon":"1 emoji kepala ular atau kosong","decor":["4-6 emoji hiasan"]}\n' +
+      'Warna a dan b mirip tapi beda sedikit. Semua warna format #RRGGBB.';
+    return geminiRequest(prompt, true).then(function (txt) {
+      txt = txt.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+      var t = TH.sanitizeTheme(JSON.parse(txt)); t.id = 'ai'; return t;
+    });
+  }
+  function aiTheme(text, btn, cb) {
+    if (!LS.get('gemini', '')) { toast('Isi API key Gemini dulu di Pengaturan'); showSettings(); return; }
+    var old = btn.innerHTML; btn.disabled = true; btn.textContent = 'AI sedang membuat…';
+    aiThemeRaw(text).then(function (t) { toast('Tema AI siap: ' + t.name); cb(t); })
       .catch(function (e) { btn.disabled = false; btn.innerHTML = old; toast('AI gagal: ' + String(e.message || e).slice(0, 90), 4500); });
   }
 
@@ -546,28 +558,29 @@
   function showGame(g) {
     go('game');
     g = clone(g); fixGame(g);
-    G.game = g; G.shownSeq = g.seq; G.disp = {}; G.queue = []; G.busy = false; G.rolling = false; G.winShown = 0; G.botSeq = -1; G.unread = 0; G.chatOpen = false;
+    G.game = g; G.shownSeq = g.seq; G.disp = {}; G.queue = []; G.busy = false; G.rolling = false; G.winShown = 0; G.botSeq = -1; G.unread = 0; G.chatOpen = false; G.pendingTheme = null;
     g.players.forEach(function (p) { G.disp[p.id] = p.pos; });
     G.msg = g.move ? moveText(g, g.move) : 'Giliran ' + g.players[g.turn].name + '. Kocok dadunya!';
     applyTheme(g.theme); G.drawnTheme = JSON.stringify(g.theme);
-    var h = '<div class="game' + (online() ? ' has-chat' : '') + '">';
-    h += '<div class="g-top"><button class="icon-btn" id="gMenu" aria-label="Menu">' + I.menu + '</button><span class="title">' + esc(g.theme.name) + '</span>' + (online() ? '<span class="chip">Room ' + esc(R.code) + '</span>' : '<span class="chip gray">' + (G.mode === 'satu' ? 'Satu HP' : 'Lawan Bot') + '</span>') + '</div>';
+    var h = '<div class="game has-chat">';
+    h += '<div class="g-top"><button class="icon-btn" id="gMenu" aria-label="Menu">' + I.menu + '</button><button class="title theme-btn" id="gTheme" aria-label="Ganti tema"><span class="pal">' + I.palette + '</span><span class="tn">' + esc(g.theme.name) + '</span><span class="caret">' + I.down + '</span></button>' + (online() ? '<span class="chip">Room ' + esc(R.code) + '</span>' : '<span class="chip gray">' + (G.mode === 'satu' ? 'Satu HP' : 'Lawan Bot') + '</span>') + '</div>';
     h += '<div class="g-players" id="gPlayers"></div>';
     h += '<div class="g-board" id="gBoard">' + boardSVG(g.theme, g.layout) + '</div>';
     h += '<div class="g-msg" id="gMsg"></div>';
     h += '<div class="g-controls"><div class="dice" id="gDice">' + diceSVG(g.move ? g.move.roll : 1) + '</div><div class="grow" style="display:flex;flex-direction:column;gap:6px"><span class="turn-label" id="gTurn"></span><div class="row">' +
-      (online() ? '<button class="icon-btn chat-toggle" id="gChatBtn" aria-label="Buka obrolan" style="width:56px;height:56px;border-radius:16px">' + I.chat + '<span class="badge" id="gBadge" hidden>0</span></button>' : '') +
+      '<button class="icon-btn chat-toggle" id="gChatBtn" aria-label="Buka obrolan" style="width:56px;height:56px;border-radius:16px">' + I.chat + '<span class="badge" id="gBadge" hidden>0</span></button>' +
       '<button class="btn red grow" id="gRoll">Kocok Dadu</button></div></div></div>';
-    if (online()) h += chatHTML();
-    h += '</div>';
-    if (online()) h += '<div class="scrim" id="scrim"></div>';
+    h += chatHTML();
+    h += '</div><div class="scrim" id="scrim"></div>';
     app.innerHTML = h;
     $('#gMenu').onclick = showMenu;
+    $('#gTheme').onclick = onThemeBtn;
     $('#gRoll').onclick = doRoll;
     $('#gDice').onclick = doRoll;
-    if (online()) { R.chatKeys = {}; G.chatReady = false; bindChat(); }
+    R.chatKeys = {}; G.chatReady = false; G.aiMode = null; G.aiSince = Date.now(); bindChat();
+    if (!online()) { var lc = LS.get('localchat', null); G.localChat = (lc && lc.started === g.started) ? lc.chat : {}; }
     renderPlayers(); placeTokens(); setMsg(G.msg); updateControls(); renderVideo();
-    if (online()) renderChatNew();
+    renderChatNew();
     afterSettle();
   }
   function fixGame(g) {
@@ -583,7 +596,9 @@
       return '<div class="pcard' + (!g.winner && p.id === cur.id ? ' turn' : '') + '" style="--pc:' + p.color + '"><span class="dot" style="background:' + p.color + (p.photo ? ';background-image:url(' + esc(p.photo) + ')' : '') + '"></span><span class="nm">' + esc(p.name) + (online() && p.uid === me.uid ? ' (kamu)' : '') + '</span><span class="ps">' + (p.bot ? 'Bot · ' : '') + 'Kotak ' + (G.disp[p.id] || 0) + '</span></div>';
     }).join('');
   }
-  var OFFS = [[[0, 0]], [[-16, -12], [16, 12]], [[-18, -14], [18, -14], [0, 16]], [[-18, -18], [18, -18], [-18, 18], [18, 18]], [[-20, -20], [20, -20], [0, 0], [-20, 20], [20, 20]], [[-22, -20], [0, -20], [22, -20], [-22, 18], [0, 18], [22, 18]]];
+  var OFFS = [[[0, 0]], [[-22, -14], [22, 14]], [[-24, -22], [24, -22], [0, 22]], [[-24, -24], [24, -24], [-24, 24], [24, 24]], [[-26, -26], [26, -26], [0, 0], [-26, 26], [26, 26]], [[-28, -24], [0, -24], [28, -24], [-28, 24], [0, 24], [28, 24]]];
+  var GSCALE = [1, 0.74, 0.6, 0.6, 0.52, 0.5];
+  function tokLabel(n) { n = String(n || '?').trim().split(/\s+/)[0]; return n.length > 6 ? n.slice(0, 5) + '…' : n; }
   function placeTokens(slideId) {
     var g = G.game, layer = $('#tokens'); if (!layer || !g) return;
     var groups = {};
@@ -593,14 +608,14 @@
       var el = $('#tok-' + cssId(p.id), layer);
       if (!el) {
         el = document.createElementNS('http://www.w3.org/2000/svg', 'g'); el.setAttribute('class', 'tok'); el.id = 'tok-' + cssId(p.id);
-        el.innerHTML = '<circle class="ring" r="36" fill="none" stroke="' + p.color + '" stroke-width="6" style="display:none"/><circle r="27" fill="' + p.color + '" stroke="#fff" stroke-width="6"/><circle r="27" fill="none" stroke="rgba(0,0,0,.25)" stroke-width="2"/><text y="9" text-anchor="middle" font-size="26" font-weight="800" font-family="Nunito,sans-serif" fill="#fff">' + esc((p.name || '?').charAt(0).toUpperCase()) + '</text>';
+        var lb = tokLabel(p.name), fs = [34, 34, 30, 26, 22, 19, 17][Math.min(lb.length, 6)];
+        el.innerHTML = '<circle class="ring" r="48" fill="none" stroke="' + p.color + '" stroke-width="7" style="display:none"/><circle r="40" cy="3" fill="rgba(0,0,0,.28)"/><circle r="38" fill="' + p.color + '" stroke="#fff" stroke-width="5"/><text y="' + Math.round(fs * 0.36) + '" text-anchor="middle" font-size="' + fs + '" font-weight="800" font-family="Nunito,sans-serif" fill="#fff" stroke="rgba(0,0,0,.45)" stroke-width="3.5" paint-order="stroke">' + esc(lb) + '</text>';
         layer.appendChild(el);
       }
       var pos = G.disp[p.id] || 0, grp = groups[pos], k = grp.indexOf(p), off = OFFS[Math.min(grp.length, 6) - 1][k] || [0, 0];
-      var xy = cellXY(pos), x = xy[0] + off[0] * (grp.length > 1 ? 1 : 0), y = xy[1] + off[1] * (grp.length > 1 ? 1 : 0);
-      if (pos === 0) { y = xy[1] + 20; x = xy[0] - 30 + (g.players.indexOf(p) * 12); }
+      var xy = cellXY(pos), x = xy[0] + off[0], y = xy[1] + off[1], sc = GSCALE[Math.min(grp.length, 6) - 1];
       el.classList.toggle('slide', slideId === p.id);
-      el.setAttribute('transform', 'translate(' + x + ' ' + y + ')'); el.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+      el.setAttribute('transform', 'translate(' + x + ' ' + y + ') scale(' + sc + ')'); el.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + sc + ')';
       el.querySelector('.ring').style.display = (!g.winner && cur && cur.id === p.id && !G.busy) ? '' : 'none';
     });
     // token pemain yang sedang jalan selalu di paling atas
@@ -620,7 +635,7 @@
     t.innerHTML = 'Giliran <span style="color:' + p.color + ';filter:brightness(.85)">' + esc(p.name) + '</span>';
     var can = myTurn() && !G.busy && !G.rolling;
     b.disabled = !can;
-    b.textContent = myTurn() ? 'Kocok Dadu' : (p.bot ? 'Bot sedang main…' : 'Tunggu ' + p.name + '…');
+    b.textContent = myTurn() ? 'Kocok Dadu' : (p.bot ? p.name + ' jalan…' : 'Tunggu ' + p.name + '…');
     var skip = $('#gSkip');
     var showSkip = online() && G.isHost && !p.bot && p.uid !== me.uid && !G.busy;
     if (showSkip && !skip) { var s = document.createElement('button'); s.id = 'gSkip'; s.className = 'btn small ghost'; s.style.cssText = 'height:36px;font-size:13px;color:#23304A;border-color:#E7DCC2'; s.textContent = 'Lewati'; s.onclick = function () { if (confirm('Lewati giliran ' + p.name + '?')) commit(skipTurn(G.game)); }; $('#gMsg').appendChild(s); }
@@ -682,11 +697,12 @@
         await sleep(780); placeTokens();
       }
       var p = pById(g, m.pid);
-      if (online() && p) addSys(moveText(g, m));
+      if (p) addSys(moveText(g, m));
     })();
   }
   function afterSettle() {
     var g = G.game; if (!g || current !== 'game' || G.busy) return;
+    if (G.pendingTheme && !G.rolling) { applyPendingTheme(); return; }
     if (g.winner) { if (G.winShown !== g.started) { G.winShown = g.started; setTimeout(showWin, 500); } return; }
     var p = g.players[g.turn];
     if (p.bot && (!online() || G.isHost) && G.botSeq !== g.seq) {
@@ -702,7 +718,7 @@
     m.innerHTML = '<div class="sheet" role="dialog" aria-label="Menu"><div class="row" style="justify-content:space-between"><h2 style="font-size:24px">Menu</h2><button class="icon-btn" data-a="close" aria-label="Tutup">' + I.close + '</button></div>' +
       '<button class="btn" data-a="close">Lanjut main</button>' +
       '<button class="btn ghost" data-a="video">Putar video dari link</button>' +
-      ((!online() || G.isHost) ? '<button class="btn ghost" data-a="theme">Ganti tema</button>' : '') +
+      '<button class="btn ghost" data-a="settings">Pengaturan (API key Gemini)</button>' +
       '<button class="btn ghost" data-a="sound">Suara: ' + (S.sound ? 'nyala' : 'mati') + '</button>' +
       (canRestart ? '<button class="btn ghost" data-a="restart">Main ulang dari awal</button>' : '') +
       (online() ? '<button class="btn ghost" data-a="share">Salin link room</button>' : '') +
@@ -712,7 +728,7 @@
       var a = e.target.closest('[data-a]'); if (e.target === m) return m.remove(); if (!a) return;
       var act = a.dataset.a; m.remove();
       if (act === 'video') { var u = prompt('Tempel link YouTube / TikTok / Instagram:'); if (u) { var v = parseVideo(u); if (v) openVideo(v, me.name || 'Kamu'); else toast('Link video tidak dikenali'); } }
-      else if (act === 'theme') themeModal(changeThemeMidGame);
+      else if (act === 'settings') showSettings();
       else if (act === 'sound') { S.sound = !S.sound; saveS(); toast('Suara ' + (S.sound ? 'nyala' : 'mati')); }
       else if (act === 'restart') { if (confirm('Mulai ulang permainan?')) restartGame(); }
       else if (act === 'share') copyText(shareLink());
@@ -739,7 +755,7 @@
       '<span style="font-size:13px;color:var(--muted)">Posisi pemain dan susunan ular-tangga tetap, hanya tampilannya yang berubah.</span>' +
       '<label class="sr" for="mtText">Tema</label><input class="input" id="mtText" maxlength="60" placeholder="mis. pantai, luar angkasa…" value="' + esc(S.themeText) + '">' +
       '<div class="row"><button class="btn small dark grow" id="mtFind">Cari di tema bawaan</button><button class="btn small dark grow" id="mtAI">' + I.spark + ' Pakai AI</button></div>' +
-      '<div style="display:flex;gap:6px;flex-wrap:wrap">' + TH.list.map(function (t) { return '<button class="pill" data-tid="' + t.id + '">' + esc(t.name) + '</button>'; }).join('') + '</div></div>';
+      '<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="pill" data-rand style="border-color:var(--accent)">🎲 Tema acak</button>' + TH.list.map(function (t) { return '<button class="pill" data-tid="' + t.id + '">' + esc(t.name) + '</button>'; }).join('') + '</div></div>';
     document.body.appendChild(m);
     function pick(t) { m.remove(); S.theme = clone(t); saveS(); onPick(clone(t)); }
     $('[data-x]', m).onclick = function () { m.remove(); };
@@ -748,9 +764,19 @@
     $('#mtText', m).onkeydown = function (e) { if (e.key === 'Enter') $('#mtFind', m).click(); };
     $('#mtAI', m).onclick = function () { var v = $('#mtText', m).value.trim(); if (!v) { toast('Tulis temanya dulu'); return; } S.themeText = v; m.style.zIndex = 39; aiTheme(v, this, pick); };
     $$('[data-tid]', m).forEach(function (b) { b.onclick = function () { var t = TH.list.filter(function (x) { return x.id === b.dataset.tid; })[0]; S.themeText = t.name; pick(t); }; });
+    $('[data-rand]', m).onclick = function () { var L = TH.list.filter(function (x) { return x.name !== (G.game && G.game.theme.name); }); var t = L[Math.floor(Math.random() * L.length)]; S.themeText = t.name; pick(t); };
   }
-  function changeThemeMidGame(t) {
-    var g = G.game; if (!g || G.busy) { toast('Tunggu langkah selesai dulu'); return; }
+  // tema baru masuk antrean dan dipasang begitu papan sedang diam (tidak bentrok dengan langkah bot)
+  function changeThemeMidGame(t, cb) {
+    G.pendingTheme = { t: t, cb: cb };
+    if (!G.busy && !G.rolling) applyPendingTheme();
+  }
+  function applyPendingTheme() {
+    var p = G.pendingTheme; G.pendingTheme = null; if (!p) return;
+    setThemeNow(p.t); if (p.cb) p.cb();
+  }
+  function setThemeNow(t) {
+    var g = G.game; if (!g) return;
     var ng = clone(g); ng.theme = TH.sanitizeTheme(t); ng.seq = (g.seq || 0) + 1;
     ng.move = { seq: ng.seq, pid: g.players[g.turn].id, theme: true, roll: 0, from: 0, mid: 0, to: 0 };
     commit(ng);
@@ -759,7 +785,7 @@
     var g = G.game, b = $('#gBoard'); if (!b) return;
     applyTheme(g.theme); G.drawnTheme = JSON.stringify(g.theme);
     b.innerHTML = boardSVG(g.theme, g.layout);
-    var tt = $('.g-top .title'); if (tt) tt.textContent = g.theme.name;
+    var tt = $('#gTheme .tn'); if (tt) tt.textContent = g.theme.name;
     placeTokens(); renderVideo();
   }
 
@@ -792,10 +818,12 @@
   // =====================================================================
   //  CHAT + VOICE NOTE
   // =====================================================================
+  var GEM = { uid: 'gemini', name: 'Gemini', color: '#4285F4' };
   function chatHTML() {
     return '<section class="chat" id="chat" aria-label="Obrolan"><div class="chat-head"><h2>Obrolan</h2><button class="icon-btn chat-close" id="chatClose" aria-label="Tutup obrolan">' + I.down + '</button></div>' +
-      '<div class="chat-list" id="chatList"><div class="sys">Kirim pesan, voice note, atau link video YouTube / TikTok / Instagram</div></div>' +
-      '<div class="quick">' + ['Ayo cepet!', 'Hoki banget 😆', 'Awas ular 🐍', 'Yah 😭', 'GG 👍'].map(function (q) { return '<button class="pill" data-q="' + esc(q) + '">' + esc(q) + '</button>'; }).join('') + '</div>' +
+      '<div class="chat-list" id="chatList"><div class="sys">Tekan <b>✦ Gemini</b> untuk bertanya, atau <b>🎨 Tema</b> untuk ganti tema lewat chat' + (online() ? '. Bisa juga kirim voice note atau link YouTube / TikTok / Instagram.' : '.') + '</div></div>' +
+      '<div class="quick"><button class="pill ai" data-ai="ask">' + I.gem + ' Gemini</button><button class="pill ai" data-ai="theme">🎨 Tema</button>' +
+      ['Ayo cepet!', 'Hoki banget 😆', 'Awas ular 🐍', 'Yah 😭', 'GG 👍'].map(function (q) { return '<button class="pill" data-q="' + esc(q) + '">' + esc(q) + '</button>'; }).join('') + '</div>' +
       '<div class="chat-input" id="chatInput"></div></section>';
   }
   function bindChat() {
@@ -803,7 +831,18 @@
     $('#chatClose').onclick = function () { setChat(false); };
     $('#scrim').onclick = function () { setChat(false); };
     $$('[data-q]').forEach(function (b) { b.onclick = function () { sendChat({ text: b.dataset.q }); }; });
+    $$('[data-ai]').forEach(function (b) { b.onclick = function () { setAIMode(G.aiMode === b.dataset.ai ? null : b.dataset.ai); }; });
     renderChatInput();
+  }
+  function setAIMode(mode) {
+    G.aiMode = mode;
+    $$('[data-ai]').forEach(function (x) { x.classList.toggle('on', x.dataset.ai === mode); });
+    renderChatInput();
+    var f = $('#chatField'); if (f && mode) f.focus();
+  }
+  function onThemeBtn() {
+    if (!online() || G.isHost) { themeModal(changeThemeMidGame); return; }
+    setChat(true); setAIMode('theme'); toast('Ketik tema yang kamu mau, tuan rumah yang akan menggantinya');
   }
   function wide() { return window.matchMedia('(min-width: 760px) and (min-height: 520px)').matches; }
   function setChat(open) {
@@ -819,47 +858,127 @@
       $('#recCancel').onclick = function () { stopRec(false); }; $('#recStop').onclick = function () { stopRec(true); };
       return;
     }
-    el.innerHTML = '<label class="sr" for="chatField">Tulis pesan</label><input class="field" id="chatField" maxlength="300" placeholder="Tulis pesan atau tempel link…" autocomplete="off"><button class="round" id="chatAct" aria-label="Rekam voice note">' + I.mic + '</button>';
-    var f = $('#chatField'), act = $('#chatAct');
-    function upd() { var has = f.value.trim().length > 0; act.className = 'round' + (has ? ' send' : ''); act.innerHTML = has ? I.send : I.mic; act.setAttribute('aria-label', has ? 'Kirim pesan' : 'Rekam voice note'); }
+    var mode = G.aiMode, canVoice = online() && !mode;
+    var ph = mode === 'ask' ? 'Tanya apa ke Gemini?' : mode === 'theme' ? 'Mau tema apa? mis. pantai, kantor…' : 'Tulis pesan atau tempel link…';
+    el.innerHTML = (mode ? '<button class="mode-chip" id="modeX" aria-label="Batalkan mode ' + (mode === 'ask' ? 'Gemini' : 'tema') + '">' + (mode === 'ask' ? I.gem + ' Gemini' : '🎨 Tema') + ' <span aria-hidden="true">✕</span></button>' : '') +
+      '<label class="sr" for="chatField">Tulis pesan</label><input class="field" id="chatField" maxlength="300" placeholder="' + ph + '" autocomplete="off"><button class="round' + (canVoice ? '' : ' send') + '" id="chatAct" aria-label="' + (canVoice ? 'Rekam voice note' : 'Kirim') + '">' + (canVoice ? I.mic : I.send) + '</button>';
+    var f = $('#chatField'), act = $('#chatAct'), mx = $('#modeX');
+    if (mx) mx.onclick = function () { setAIMode(null); };
+    function upd() { if (!canVoice) return; var has = f.value.trim().length > 0; act.className = 'round' + (has ? ' send' : ''); act.innerHTML = has ? I.send : I.mic; act.setAttribute('aria-label', has ? 'Kirim pesan' : 'Rekam voice note'); }
+    function send() {
+      var v = f.value.trim(); if (!v) { if (canVoice) startRec(); return; }
+      var m = G.aiMode;
+      if (m) { sendChat({ text: v, ai: m }); showTyping(true); setAIMode(null); }
+      else { sendChat({ text: v }); f.value = ''; upd(); }
+    }
     f.oninput = upd;
-    f.onkeydown = function (e) { if (e.key === 'Enter' && f.value.trim()) { sendChat({ text: f.value.trim() }); f.value = ''; upd(); } };
-    act.onclick = function () { if (f.value.trim()) { sendChat({ text: f.value.trim() }); f.value = ''; upd(); } else startRec(); };
+    f.onkeydown = function (e) { if (e.key === 'Enter') send(); };
+    act.onclick = send;
   }
-  function myColor() { var g = G.game; if (g) { var p = g.players.filter(function (x) { return x.uid === me.uid; })[0]; if (p) return p.color; } return '#5A6478'; }
+  function myColor() { var g = G.game; if (g) { var p = g.players.filter(function (x) { return x.uid === me.uid || (!online() && x.id === 'p0'); })[0]; if (p) return p.color; } return '#5A6478'; }
   function sendChat(o) {
-    if (!R.code) return;
-    o.uid = me.uid; o.name = me.name || 'Pemain'; o.color = myColor(); o.t = TS;
-    db('rooms/' + R.code + '/chat', 'POST', o).catch(function (e) { toast('Pesan gagal: ' + e.message); });
+    o.uid = me.uid; o.name = me.name || 'Pemain'; o.color = myColor();
+    postChat(o);
   }
-  function addSys(t) { var l = $('#chatList'); if (!l) return; var d = document.createElement('div'); d.className = 'sys'; d.textContent = t; l.appendChild(d); trimChat(l); if (G.chatOpen || wide()) l.scrollTop = l.scrollHeight; }
+  var localN = 0;
+  function postChat(o) {
+    if (online()) {
+      if (!R.code) return;
+      o.t = TS;
+      db('rooms/' + R.code + '/chat', 'POST', o).catch(function (e) { toast('Pesan gagal: ' + e.message); });
+    } else {
+      o.t = Date.now();
+      var k = 'L' + o.t + String(localN++).padStart(4, '0');
+      G.localChat = G.localChat || {}; G.localChat[k] = o; saveLocalChat();
+      renderChatNew();
+    }
+  }
+  function saveLocalChat() {
+    if (online() || !G.game) return;
+    var keys = Object.keys(G.localChat || {}).sort().slice(-60), c = {};
+    keys.forEach(function (k) { c[k] = G.localChat[k]; });
+    G.localChat = c; LS.set('localchat', { started: G.game.started, chat: c });
+  }
+  function geminiSay(text) { postChat({ uid: GEM.uid, name: GEM.name, color: GEM.color, text: String(text).slice(0, 700) }); }
+  function showTyping(on) {
+    var l = $('#chatList'); if (!l) return; var t = $('#aiTyping');
+    if (on && !t) { t = document.createElement('div'); t.id = 'aiTyping'; t.className = 'sys'; t.textContent = 'Gemini sedang mengetik…'; l.appendChild(t); l.scrollTop = l.scrollHeight; clearTimeout(G.typT); G.typT = setTimeout(function () { showTyping(false); }, 30000); }
+    else if (!on && t) t.remove();
+  }
+  function addSys(t) { var l = $('#chatList'); if (!l) return; var d = document.createElement('div'); d.className = 'sys'; d.textContent = t; var ty = $('#aiTyping'); if (ty) l.insertBefore(d, ty); else l.appendChild(d); trimChat(l); if (G.chatOpen || wide()) l.scrollTop = l.scrollHeight; }
   function trimChat(l) { while (l.children.length > 160) l.removeChild(l.firstChild); }
+  function chatSource() { return online() ? ((R.data && R.data.chat) || {}) : (G.localChat || {}); }
   function renderChatNew() {
-    var d = R.data, l = $('#chatList'); if (!d || !l) return;
-    var ch = d.chat || {}, keys = Object.keys(ch).sort(), added = 0, fromOthers = 0;
+    var l = $('#chatList'); if (!l) return;
+    var ch = chatSource(), keys = Object.keys(ch).sort(), added = 0, fromOthers = 0;
     keys.forEach(function (k) {
       if (R.chatKeys[k]) return; R.chatKeys[k] = 1; added++;
       var m = ch[k]; if (!m) return;
-      var mine = m.uid === me.uid; if (!mine) fromOthers++;
-      var el = document.createElement('div'); el.className = 'msg' + (mine ? ' me' : '');
+      var isGem = m.uid === GEM.uid, mine = !isGem && m.uid === me.uid; if (!mine) fromOthers++;
+      if (isGem) showTyping(false);
+      var el = document.createElement('div'); el.className = 'msg' + (mine ? ' me' : '') + (isGem ? ' gem' : '');
       var body = '';
       if (m.audio) body = '<div class="voice"><button aria-label="Putar voice note">' + I.play + '</button><span class="bar"><i></i></span><span style="font-size:12px;font-weight:700;color:#4A5468">0:' + String(m.dur || 0).padStart(2, '0') + '</span></div>';
       else {
-        var txt = esc(m.text || '').replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+        var txt = esc(m.text || '').replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>').replace(/\n/g, '<br>');
+        if (m.ai) txt = '<span class="ai-tag">' + (m.ai === 'theme' ? '🎨 minta tema' : I.gem + ' ke Gemini') + '</span> ' + txt;
         body = '<div>' + txt + '</div>';
         var v = parseVideo(m.text || '');
-        if (v) body += '<div class="vcard"><div class="vthumb"' + (v.thumb ? ' style="background-image:url(' + esc(v.thumb) + ')"' : '') + '>' + I.play + '</div><div style="min-width:0"><div style="font-size:11px;font-weight:800;color:#4A5468">' + esc(v.platform) + '</div><div style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(v.open.replace(/^https?:\/\//, '')) + '</div></div></div><button class="vbtn">' + (v.embed ? 'Putar di atas papan' : 'Buka di aplikasi') + '</button>';
+        if (v && !m.ai) body += '<div class="vcard"><div class="vthumb"' + (v.thumb ? ' style="background-image:url(' + esc(v.thumb) + ')"' : '') + '>' + I.play + '</div><div style="min-width:0"><div style="font-size:11px;font-weight:800;color:#4A5468">' + esc(v.platform) + '</div><div style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(v.open.replace(/^https?:\/\//, '')) + '</div></div></div><button class="vbtn">' + (v.embed ? 'Putar di atas papan' : 'Buka di aplikasi') + '</button>';
       }
-      el.innerHTML = (mine ? '' : '<span class="dot" style="background:' + esc(m.color || '#5A6478') + '"></span>') + '<div class="bub">' + (mine ? '' : '<div class="who" style="color:' + esc(m.color || '#2459AE') + ';filter:brightness(.8)">' + esc(m.name) + '</div>') + body + '</div>';
-      l.appendChild(el);
+      var dot = isGem ? '<span class="dot gemdot">' + I.gem + '</span>' : '<span class="dot" style="background:' + esc(m.color || '#5A6478') + '"></span>';
+      el.innerHTML = (mine ? '' : dot) + '<div class="bub">' + (mine ? '' : '<div class="who" style="color:' + esc(m.color || '#2459AE') + ';filter:brightness(.8)">' + esc(m.name) + '</div>') + body + '</div>';
+      var ty = $('#aiTyping'); if (ty && !isGem) l.insertBefore(el, ty); else l.appendChild(el);
       if (m.audio) bindVoice(el, m.audio);
       var vb = el.querySelector('.vbtn'); if (vb) { var vv = parseVideo(m.text); vb.onclick = function () { if (vv.embed) { openVideo(vv, m.name); if (!wide()) setChat(false); } else window.open(vv.open, '_blank', 'noopener'); }; }
+      // permintaan ke Gemini: dijawab oleh HP ini (lawan bot / satu HP) atau HP tuan rumah (online)
+      if (m.ai && !m.done && (!online() || G.isHost) && !G.aiHandled[k] && (!online() || (m.t || 0) >= G.aiSince - 15000)) {
+        G.aiHandled[k] = 1; markDone(k); handleAI(m);
+      }
     });
     if (!added) { G.chatReady = true; return; }
     trimChat(l);
     if (G.chatOpen || wide()) l.scrollTop = l.scrollHeight;
     if (fromOthers && G.chatReady) { SFX.ping(); if (!G.chatOpen && !wide()) { G.unread += fromOthers; updBadge(); } }
     G.chatReady = true;
+  }
+  G.aiHandled = {};
+  function markDone(k) {
+    if (online()) db('rooms/' + R.code + '/chat/' + k, 'PATCH', { done: true }).catch(function () { });
+    else if (G.localChat && G.localChat[k]) { G.localChat[k].done = true; saveLocalChat(); }
+  }
+  function waitIdle() {
+    return new Promise(function (res) { var n = 0; (function chk() { if ((!G.busy && !G.rolling) || n++ > 75) res(); else setTimeout(chk, 200); })(); });
+  }
+  function handleAI(m) {
+    var hasKey = !!LS.get('gemini', '');
+    if (m.ai === 'theme') {
+      var p = hasKey ? aiThemeRaw(m.text) : Promise.resolve(clone(TH.matchTheme(m.text).theme));
+      p.then(function (t) {
+        return Promise.resolve().then(function () {
+          if (current !== 'game' || !G.game) return;
+          S.theme = clone(t); S.themeText = m.text; saveS();
+          changeThemeMidGame(t, function () { geminiSay('Siap! Tema sekarang "' + t.name + '": tangga jadi ' + t.ladderName + ', ular jadi ' + t.snakeName + '.' + (hasKey ? '' : ' (Dipilih dari tema bawaan karena API key Gemini belum diisi.)')); });
+        });
+      }).catch(function (e) { geminiSay('Maaf, aku gagal bikin tema itu (' + String(e.message || e).slice(0, 80) + '). Coba tema lain ya.'); });
+      return;
+    }
+    if (!hasKey) { geminiSay('Aku belum aktif. ' + (online() ? 'Tuan rumah perlu mengisi' : 'Isi dulu') + ' API key Gemini lewat Menu → Pengaturan ya. Gratis kok, cukup akun Google.'); return; }
+    geminiRequest(chatPrompt(m), false).then(function (t) { geminiSay(t || 'Hmm, aku bingung mau jawab apa 😅'); })
+      .catch(function (e) { geminiSay('Maaf, aku lagi gangguan: ' + String(e.message || e).slice(0, 100)); });
+  }
+  function chatPrompt(m) {
+    var g = G.game, cur = g.players[g.turn];
+    var lines = g.players.map(function (p) { return '- ' + p.name + (p.bot ? ' (bot)' : '') + ': kotak ' + p.pos; }).join('\n');
+    var ch = chatSource(), recent = Object.keys(ch).sort().slice(-12).map(function (k) { var x = ch[k]; return x.name + ': ' + (x.audio ? '[voice note]' : (x.text || '')); }).join('\n');
+    return 'Kamu "Gemini", teman main ular tangga yang ramah, lucu, dan suportif. Jawab dalam bahasa Indonesia santai, singkat (maksimal 3 kalimat), boleh pakai 1 emoji. ' +
+      'Jangan mengarang kejadian yang tidak ada di data. Hasil dadu itu acak, jangan janji bisa mengatur dadu.\n\n' +
+      'KONDISI PERMAINAN\nTema papan: ' + g.theme.name + ' (tangga = ' + g.theme.ladderName + ', ular = ' + g.theme.snakeName + ')\n' +
+      'Mode: ' + (online() ? 'online' : G.mode === 'bot' ? 'lawan bot' : 'satu HP gantian') + '\nPosisi pemain (finish di kotak 100):\n' + lines + '\n' +
+      'Giliran sekarang: ' + cur.name + '\n' + (g.winner ? 'Pemenang: ' + (pById(g, g.winner) || {}).name + '\n' : '') +
+      (g.move && !g.move.theme ? 'Langkah terakhir: ' + moveText(g, g.move) + '\n' : '') +
+      'Tangga di: ' + g.layout.ladders.map(function (x) { return x[0] + '→' + x[1]; }).join(', ') + '\nUlar di: ' + g.layout.snakes.map(function (x) { return x[0] + '→' + x[1]; }).join(', ') + '\n\n' +
+      'OBROLAN TERAKHIR\n' + recent + '\n\nPertanyaan dari ' + m.name + ': ' + m.text;
   }
   var playing = null;
   function bindVoice(el, src) {

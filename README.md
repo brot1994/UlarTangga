@@ -6,9 +6,9 @@ Game ular tangga untuk 1–6 pemain: satu HP gantian, lawan bot, atau online dar
 
 ## Fitur
 - Mode Satu HP, Lawan Bot, dan Online (kode room 4 angka, bisa dibagikan ke WA)
-- 17 tema bawaan + tema dari teks bebas pakai AI (Gemini, API key diisi di Pengaturan)
+- 57 tema bawaan (bisa diganti di tengah permainan lewat tombol tema di atas papan) + tema dari teks bebas pakai AI (Gemini, API key diisi di Pengaturan)
 - Susunan Klasik / Santai / Tegang / Acak (tetap adil)
-- Chat, voice note (maks 30 detik), dan video YouTube / TikTok / Instagram melayang di atas papan
+- Chat di semua mode dengan tombol ✦ Gemini (tanya jawab) dan 🎨 Tema (ganti tema lewat chat); online: voice note (maks 30 detik), dan video YouTube / TikTok / Instagram melayang di atas papan
 - Tampilan melebar otomatis di tablet / fold / landscape
 
 ## Data online
