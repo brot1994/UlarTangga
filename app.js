@@ -460,7 +460,7 @@
       '<label class="sr" for="sKey">API key Gemini</label><input class="input" id="sKey" type="password" autocomplete="off" placeholder="Tempel API key" value="' + esc(LS.get('gemini', '')) + '">' +
       '<button class="btn small dark" id="sTest" type="button">Tes key</button><span id="sTestRes" style="font-size:13px;font-weight:700"></span>' +
       '<label style="font-size:13px;font-weight:700" for="sModel">Model (biarkan kosong: game memilih model Flash terbaru otomatis)</label><input class="input" id="sModel" placeholder="' + esc(CFG.GEMINI_MODEL) + '" value="' + esc(LS.get('geminiModel', '')) + '"></div>' +
-      '<button class="btn" id="sSave">Simpan</button></div>';
+      '<button class="btn" id="sSave">Simpan</button><span style="font-size:11px;color:var(--muted);text-align:center">Versi game: 20261025c</span></div>';
     document.body.appendChild(m);
     function close() { m.remove(); }
     $('#sClose', m).onclick = close; m.onclick = function (e) { if (e.target === m) close(); };
