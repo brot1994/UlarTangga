@@ -177,3 +177,10 @@ h1, h2, h3 { font-family: var(--display); margin: 0; line-height: 1.1; }
   .scrim { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .tok, .tok.slide { transition-duration: .01s; } .dice.roll svg { animation: none; } }
+
+/* ---------- GILIRAN KAMU ---------- */
+.turn-banner { position: fixed; left: 50%; top: max(18px, env(safe-area-inset-top)); transform: translateX(-50%); z-index: 70; background: #23304A; color: #fff; font-family: var(--display); font-weight: 800; font-size: 26px; padding: 12px 26px; border-radius: 18px; box-shadow: 0 10px 30px rgba(0,0,0,.35); animation: bannerIn .35s cubic-bezier(.2,1.4,.4,1); transition: opacity .4s, transform .4s; white-space: nowrap; }
+.turn-banner.out { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+@keyframes bannerIn { from { transform: translateX(-50%) translateY(-40px) scale(.8); opacity: 0; } }
+.btn.nudge { animation: nudge .9s ease-in-out 3; }
+@keyframes nudge { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); box-shadow: 0 4px 0 var(--red-dark), 0 0 0 8px rgba(224,74,63,.25); } }

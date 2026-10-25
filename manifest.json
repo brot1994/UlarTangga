@@ -1,0 +1,9 @@
+{
+  "name": "Ular Tangga",
+  "short_name": "Ular Tangga",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#FFF4DC",
+  "theme_color": "#1F8A5B",
+  "icons": [{ "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }]
+}
