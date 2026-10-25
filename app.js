@@ -394,7 +394,8 @@
   function gFetch(path, key, body) {
     var o = { method: body ? 'POST' : 'GET', headers: { 'x-goog-api-key': key } };
     if (body) { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body); }
-    return fetch(GBASE + path, o).then(function (r) { return r.json().then(function (j) { if (!r.ok) { var e = new Error((j.error && j.error.message) || ('HTTP ' + r.status)); e.status = r.status; throw e; } return j; }); });
+    var ac = window.AbortController ? new AbortController() : null; if (ac) { o.signal = ac.signal; setTimeout(function () { ac.abort(); }, 35000); }
+    return fetch(GBASE + path, o).catch(function (e) { throw new Error(e && e.name === 'AbortError' ? 'Gemini terlalu lama menjawab' : 'tidak bisa terhubung ke Gemini'); }).then(function (r) { return r.json().then(function (j) { if (!r.ok) { var e = new Error((j.error && j.error.message) || ('HTTP ' + r.status)); e.status = r.status; throw e; } return j; }); });
   }
   // cari model Flash terbaru yang tersedia untuk key ini
   function discoverModel(key) {
@@ -939,7 +940,7 @@
   function geminiSay(text) { postChat({ uid: GEM.uid, name: GEM.name, color: GEM.color, text: String(text).slice(0, 700) }); }
   function showTyping(on) {
     var l = $('#chatList'); if (!l) return; var t = $('#aiTyping');
-    if (on && !t) { t = document.createElement('div'); t.id = 'aiTyping'; t.className = 'sys'; t.textContent = 'Gemini sedang mengetik…'; l.appendChild(t); l.scrollTop = l.scrollHeight; clearTimeout(G.typT); G.typT = setTimeout(function () { showTyping(false); }, 30000); }
+    if (on && !t) { t = document.createElement('div'); t.id = 'aiTyping'; t.className = 'sys'; t.textContent = 'Gemini sedang mengetik…'; l.appendChild(t); l.scrollTop = l.scrollHeight; clearTimeout(G.typT); G.typT = setTimeout(function () { if (!$('#aiTyping')) return; showTyping(false); addSys(online() && !G.isHost ? 'Gemini belum menjawab. Pastikan HP tuan rumah sedang membuka game ini dan API key Gemini sudah diisi di HP tuan rumah.' : 'Gemini belum menjawab. Cek koneksi internet, lalu coba lagi.'); }, 40000); }
     else if (!on && t) t.remove();
   }
   function addSys(t) { var l = $('#chatList'); if (!l) return; var d = document.createElement('div'); d.className = 'sys'; d.textContent = t; var ty = $('#aiTyping'); if (ty) l.insertBefore(d, ty); else l.appendChild(d); trimChat(l); if (G.chatOpen || wide()) l.scrollTop = l.scrollHeight; }
@@ -969,7 +970,7 @@
       if (m.audio) bindVoice(el, m.audio);
       var vb = el.querySelector('.vbtn'); if (vb) { var vv = parseVideo(m.text); vb.onclick = function () { if (vv.embed) { openVideo(vv, m.name); if (!wide()) setChat(false); } else window.open(vv.open, '_blank', 'noopener'); }; }
       // permintaan ke Gemini: dijawab oleh HP ini (lawan bot / satu HP) atau HP tuan rumah (online)
-      if (m.ai && !m.done && (!online() || G.isHost) && !G.aiHandled[k] && (!online() || (m.t || 0) >= G.aiSince - 15000)) {
+      if (m.ai && !m.done && (!online() || G.isHost) && !G.aiHandled[k] && keys.indexOf(k) >= keys.length - 20) {
         G.aiHandled[k] = 1; markDone(k); handleAI(m);
       }
     });
