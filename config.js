@@ -12,6 +12,6 @@ window.UT_CONFIG = {
   FIREBASE_DB_URL: "https://agi-flipclock-default-rtdb.asia-southeast1.firebasedatabase.app",
   DB_ROOT: "ulartangga",
   FIREBASE_WEB: null,
-  GEMINI_MODEL: "gemini-2.5-flash",
+  GEMINI_MODEL: "gemini-flash-latest",
   VOICE_MAX_SEC: 30
 };

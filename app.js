@@ -390,20 +390,47 @@
     draw();
   }
 
+  var GBASE = 'https://generativelanguage.googleapis.com/v1beta/';
+  function gFetch(path, key, body) {
+    var o = { method: body ? 'POST' : 'GET', headers: { 'x-goog-api-key': key } };
+    if (body) { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body); }
+    return fetch(GBASE + path, o).then(function (r) { return r.json().then(function (j) { if (!r.ok) { var e = new Error((j.error && j.error.message) || ('HTTP ' + r.status)); e.status = r.status; throw e; } return j; }); });
+  }
+  // cari model Flash terbaru yang tersedia untuk key ini
+  function discoverModel(key) {
+    return gFetch('models?pageSize=200', key).then(function (j) {
+      var list = (j.models || []).filter(function (m) {
+        var n = (m.name || '').toLowerCase();
+        return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0 && n.indexOf('flash') >= 0 &&
+          !/image|tts|audio|live|embed|thinking|exp/.test(n);
+      }).map(function (m) {
+        var n = m.name.replace(/^models\//, ''), v = parseFloat((n.match(/gemini-(\d+(?:\.\d+)?)/) || [0, 0])[1]) || 0;
+        var score = v * 100 + (/lite/.test(n) ? -30 : 0) + (/preview/.test(n) ? -10 : 0) + (/latest/.test(n) ? 5 : 0);
+        return { n: n, s: score };
+      }).sort(function (a, b) { return b.s - a.s; });
+      if (!list.length) throw new Error('tidak ada model Gemini Flash yang tersedia untuk key ini');
+      LS.set('geminiAutoModel', list[0].n); return list[0].n;
+    });
+  }
   function geminiRequest(prompt, asJson) {
     var key = LS.get('gemini', '');
     if (!key) return Promise.reject(new Error('API key Gemini belum diisi'));
-    var model = LS.get('geminiModel', '') || CFG.GEMINI_MODEL;
+    var manual = LS.get('geminiModel', ''), model = manual || LS.get('geminiAutoModel', '') || CFG.GEMINI_MODEL;
     var gc = { temperature: asJson ? 0.9 : 0.8 }; if (asJson) gc.responseMimeType = 'application/json';
-    return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: gc })
-    }).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status)); return j; }); })
-      .then(function (j) {
+    var body = { contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: gc };
+    function run(mdl) {
+      return gFetch('models/' + encodeURIComponent(mdl) + ':generateContent', key, body).then(function (j) {
         var c = j.candidates && j.candidates[0];
         if (!c || !c.content || !c.content.parts) throw new Error(j.promptFeedback && j.promptFeedback.blockReason ? 'ditolak filter Gemini' : 'jawaban kosong');
-        return c.content.parts.map(function (p) { return p.text || ''; }).join('').trim();
+        return c.content.parts.filter(function (p) { return !p.thought; }).map(function (p) { return p.text || ''; }).join('').trim();
       });
+    }
+    return run(model).catch(function (e) {
+      var gone = e.status === 404 || /no longer available|not found|not supported|deprecated|update your code/i.test(e.message);
+      if (manual || !gone) throw e;
+      LS.del('geminiAutoModel');
+      return discoverModel(key).then(function (m2) { if (m2 === model) throw e; return run(m2); });
+    });
   }
   function aiThemeRaw(text) {
     var prompt = 'Kamu desainer papan permainan ular tangga anak-anak dan keluarga. Buat tema papan untuk: "' + String(text).slice(0, 80) + '".\n' +
@@ -431,7 +458,7 @@
       '<div class="card" style="display:flex;flex-direction:column;gap:8px"><b>Tema pakai AI (Gemini)</b><span style="font-size:13px;color:#4A5468">Buat API key gratis di <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> (login akun Google), lalu tempel di sini. Key hanya disimpan di HP ini.</span>' +
       '<label class="sr" for="sKey">API key Gemini</label><input class="input" id="sKey" type="password" autocomplete="off" placeholder="Tempel API key" value="' + esc(LS.get('gemini', '')) + '">' +
       '<button class="btn small dark" id="sTest" type="button">Tes key</button><span id="sTestRes" style="font-size:13px;font-weight:700"></span>' +
-      '<label style="font-size:13px;font-weight:700" for="sModel">Model (biarkan kosong untuk bawaan: ' + esc(CFG.GEMINI_MODEL) + ')</label><input class="input" id="sModel" placeholder="' + esc(CFG.GEMINI_MODEL) + '" value="' + esc(LS.get('geminiModel', '')) + '"></div>' +
+      '<label style="font-size:13px;font-weight:700" for="sModel">Model (biarkan kosong: game memilih model Flash terbaru otomatis)</label><input class="input" id="sModel" placeholder="' + esc(CFG.GEMINI_MODEL) + '" value="' + esc(LS.get('geminiModel', '')) + '"></div>' +
       '<button class="btn" id="sSave">Simpan</button></div>';
     document.body.appendChild(m);
     function close() { m.remove(); }
@@ -441,7 +468,7 @@
       LS.set('gemini', $('#sKey', m).value.trim()); LS.set('geminiModel', $('#sModel', m).value.trim());
       res.style.color = '#4A5468'; res.textContent = 'Mengetes…';
       geminiRequest('Balas dengan satu kata saja: siap', false)
-        .then(function (t) { res.style.color = '#1F8A5B'; res.textContent = 'Berhasil! Gemini menjawab: ' + t.slice(0, 40); })
+        .then(function (t) { res.style.color = '#1F8A5B'; res.textContent = 'Berhasil! Model: ' + (LS.get('geminiModel', '') || LS.get('geminiAutoModel', '') || CFG.GEMINI_MODEL) + '. Jawaban: ' + t.slice(0, 30); })
         .catch(function (e) { res.style.color = '#C62828'; res.textContent = 'Gagal: ' + String(e.message || e).slice(0, 140); })
         .then(function () { LS.set('gemini', oldK); LS.set('geminiModel', oldM); });
     };
