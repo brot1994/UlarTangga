@@ -190,6 +190,7 @@
   function moveText(g, m) {
     var p = pById(g, m.pid), n = p ? p.name : '?', th = g.theme;
     if (m.skip) return n + ' dilewati.';
+    if (m.theme) return 'Tema diganti jadi ' + th.name + '. Giliran ' + g.players[g.turn].name + '.';
     var s = n + ' dapat ' + m.roll + '.';
     if (m.stay) s += ' Harus pas di 100, tetap di ' + m.from + '.';
     else if (m.via === 'ladder') s = n + ' dapat ' + m.roll + ', naik ' + th.ladderName + ' ' + m.mid + ' → ' + m.to + '!';
@@ -548,7 +549,7 @@
     G.game = g; G.shownSeq = g.seq; G.disp = {}; G.queue = []; G.busy = false; G.rolling = false; G.winShown = 0; G.botSeq = -1; G.unread = 0; G.chatOpen = false;
     g.players.forEach(function (p) { G.disp[p.id] = p.pos; });
     G.msg = g.move ? moveText(g, g.move) : 'Giliran ' + g.players[g.turn].name + '. Kocok dadunya!';
-    applyTheme(g.theme);
+    applyTheme(g.theme); G.drawnTheme = JSON.stringify(g.theme);
     var h = '<div class="game' + (online() ? ' has-chat' : '') + '">';
     h += '<div class="g-top"><button class="icon-btn" id="gMenu" aria-label="Menu">' + I.menu + '</button><span class="title">' + esc(g.theme.name) + '</span>' + (online() ? '<span class="chip">Room ' + esc(R.code) + '</span>' : '<span class="chip gray">' + (G.mode === 'satu' ? 'Satu HP' : 'Lawan Bot') + '</span>') + '</div>';
     h += '<div class="g-players" id="gPlayers"></div>';
@@ -656,6 +657,7 @@
       var anim = g.move && g.move.seq === G.shownSeq + 1 ? animateMove(g) : Promise.resolve();
       anim.then(function () {
         G.game = g; G.shownSeq = g.seq; g.players.forEach(function (p) { G.disp[p.id] = p.pos; });
+        if (JSON.stringify(g.theme) !== G.drawnTheme) rebuildBoard();
         if (g.move) setMsg(moveText(g, g.move), g.move.via === 'ladder' ? I.ladder : I.info);
         renderPlayers(); placeTokens();
         next();
@@ -665,7 +667,7 @@
   function animateMove(g) {
     var m = g.move, d = $('#gDice');
     return (async function () {
-      if (m.skip) { await sleep(200); return; }
+      if (m.skip || m.theme) { await sleep(200); return; }
       d.innerHTML = diceSVG(m.roll); d.classList.remove('roll'); void d.offsetWidth; d.classList.add('roll'); SFX.dice();
       await sleep(600);
       var path = [], i;
@@ -700,6 +702,7 @@
     m.innerHTML = '<div class="sheet" role="dialog" aria-label="Menu"><div class="row" style="justify-content:space-between"><h2 style="font-size:24px">Menu</h2><button class="icon-btn" data-a="close" aria-label="Tutup">' + I.close + '</button></div>' +
       '<button class="btn" data-a="close">Lanjut main</button>' +
       '<button class="btn ghost" data-a="video">Putar video dari link</button>' +
+      ((!online() || G.isHost) ? '<button class="btn ghost" data-a="theme">Ganti tema</button>' : '') +
       '<button class="btn ghost" data-a="sound">Suara: ' + (S.sound ? 'nyala' : 'mati') + '</button>' +
       (canRestart ? '<button class="btn ghost" data-a="restart">Main ulang dari awal</button>' : '') +
       (online() ? '<button class="btn ghost" data-a="share">Salin link room</button>' : '') +
@@ -709,6 +712,7 @@
       var a = e.target.closest('[data-a]'); if (e.target === m) return m.remove(); if (!a) return;
       var act = a.dataset.a; m.remove();
       if (act === 'video') { var u = prompt('Tempel link YouTube / TikTok / Instagram:'); if (u) { var v = parseVideo(u); if (v) openVideo(v, me.name || 'Kamu'); else toast('Link video tidak dikenali'); } }
+      else if (act === 'theme') themeModal(changeThemeMidGame);
       else if (act === 'sound') { S.sound = !S.sound; saveS(); toast('Suara ' + (S.sound ? 'nyala' : 'mati')); }
       else if (act === 'restart') { if (confirm('Mulai ulang permainan?')) restartGame(); }
       else if (act === 'share') copyText(shareLink());
@@ -726,6 +730,37 @@
       var lay = S.layoutType === 'acak' && g.layout ? TH.makeLayout('acak', Date.now() & 0x7fffffff) : g.layout;
       var n2 = newGame(ps, g.theme, lay, g.rules); LS.set('local', { mode: G.mode, game: n2 }); showGame(n2);
     }
+  }
+
+  // ---------- GANTI TEMA DI TENGAH PERMAINAN ----------
+  function themeModal(onPick) {
+    var m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = '<div class="sheet" role="dialog" aria-label="Ganti tema"><div class="row" style="justify-content:space-between"><h2 style="font-size:24px">Ganti Tema</h2><button class="icon-btn" data-x aria-label="Tutup">' + I.close + '</button></div>' +
+      '<span style="font-size:13px;color:var(--muted)">Posisi pemain dan susunan ular-tangga tetap, hanya tampilannya yang berubah.</span>' +
+      '<label class="sr" for="mtText">Tema</label><input class="input" id="mtText" maxlength="60" placeholder="mis. pantai, luar angkasa…" value="' + esc(S.themeText) + '">' +
+      '<div class="row"><button class="btn small dark grow" id="mtFind">Cari di tema bawaan</button><button class="btn small dark grow" id="mtAI">' + I.spark + ' Pakai AI</button></div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">' + TH.list.map(function (t) { return '<button class="pill" data-tid="' + t.id + '">' + esc(t.name) + '</button>'; }).join('') + '</div></div>';
+    document.body.appendChild(m);
+    function pick(t) { m.remove(); S.theme = clone(t); saveS(); onPick(clone(t)); }
+    $('[data-x]', m).onclick = function () { m.remove(); };
+    m.onclick = function (e) { if (e.target === m) m.remove(); };
+    $('#mtFind', m).onclick = function () { var v = $('#mtText', m).value.trim(); S.themeText = v; var r = TH.matchTheme(v); if (!r.exact) toast('Tidak ada yang persis, dipilihkan yang mirip'); pick(r.theme); };
+    $('#mtText', m).onkeydown = function (e) { if (e.key === 'Enter') $('#mtFind', m).click(); };
+    $('#mtAI', m).onclick = function () { var v = $('#mtText', m).value.trim(); if (!v) { toast('Tulis temanya dulu'); return; } S.themeText = v; m.style.zIndex = 39; aiTheme(v, this, pick); };
+    $$('[data-tid]', m).forEach(function (b) { b.onclick = function () { var t = TH.list.filter(function (x) { return x.id === b.dataset.tid; })[0]; S.themeText = t.name; pick(t); }; });
+  }
+  function changeThemeMidGame(t) {
+    var g = G.game; if (!g || G.busy) { toast('Tunggu langkah selesai dulu'); return; }
+    var ng = clone(g); ng.theme = TH.sanitizeTheme(t); ng.seq = (g.seq || 0) + 1;
+    ng.move = { seq: ng.seq, pid: g.players[g.turn].id, theme: true, roll: 0, from: 0, mid: 0, to: 0 };
+    commit(ng);
+  }
+  function rebuildBoard() {
+    var g = G.game, b = $('#gBoard'); if (!b) return;
+    applyTheme(g.theme); G.drawnTheme = JSON.stringify(g.theme);
+    b.innerHTML = boardSVG(g.theme, g.layout);
+    var tt = $('.g-top .title'); if (tt) tt.textContent = g.theme.name;
+    placeTokens(); renderVideo();
   }
 
   // ---------- MENANG ----------
