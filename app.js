@@ -57,9 +57,10 @@
     layoutType: LS.get('layoutType', 'klasik'),
     seed: LS.get('seed', 12345),
     rules: LS.get('rules', { six: true, exact: false }),
-    sound: LS.get('sound', true)
+    sound: LS.get('sound', true),
+    pub: LS.get('pub', true)
   };
-  function saveS() { ['mode', 'count', 'names', 'theme', 'themeText', 'layoutType', 'seed', 'rules', 'sound'].forEach(function (k) { LS.set(k, S[k]); }); }
+  function saveS() { ['mode', 'count', 'names', 'theme', 'themeText', 'layoutType', 'seed', 'rules', 'sound', 'pub'].forEach(function (k) { LS.set(k, S[k]); }); }
 
   // ---------- suara ----------
   var AC = null;
@@ -179,19 +180,37 @@
     var j = stay ? null : jumpMap(ng.layout)[t], to = j ? j.to : t;
     p.pos = to; ng.seq = (g.seq || 0) + 1;
     ng.move = { seq: ng.seq, pid: p.id, from: from, roll: roll, mid: t, to: to, via: j ? j.via : '', bounced: bounced, stay: stay };
-    if (to === 100) ng.winner = p.id;
-    else if (!(roll === 6 && ng.rules && ng.rules.six)) ng.turn = (ng.turn + 1) % ng.players.length;
+    if (to === 100) {
+      ng.finished = (ng.finished || []).concat(p.id); ng.move.finish = ng.finished.length;
+      var left = ng.players.filter(function (x) { return ng.finished.indexOf(x.id) < 0; });
+      if (left.length <= 1) ng.winner = ng.finished[0];
+      else { if (!ng.cont) ng.ask = true; ng.turn = nextTurn(ng, ng.turn); }
+    } else if (!(roll === 6 && ng.rules && ng.rules.six)) ng.turn = nextTurn(ng, ng.turn);
     return ng;
+  }
+  // giliran berikutnya, melewati pemain yang sudah finish
+  function nextTurn(g, i) {
+    var n = g.players.length, fin = g.finished || [];
+    for (var k = 1; k <= n; k++) { var j = (i + k) % n; if (fin.indexOf(g.players[j].id) < 0) return j; }
+    return i;
+  }
+  function isDone(g, id) { return (g.finished || []).indexOf(id) >= 0; }
+  function continueGame() {
+    var g = G.game; if (!g || !g.ask) return;
+    var ng = clone(g); ng.ask = false; ng.cont = true; ng.seq = g.seq + 1;
+    ng.move = { seq: ng.seq, pid: g.players[g.turn].id, cont: true, text: 'Lanjut! Sekarang rebutan juara ' + ((g.finished || []).length + 1) + '.', roll: 0, from: 0, mid: 0, to: 0 };
+    commit(ng);
   }
   function skipTurn(g) {
     var ng = clone(g), p = ng.players[ng.turn]; ng.seq = (g.seq || 0) + 1;
     ng.move = { seq: ng.seq, pid: p.id, skip: true, roll: 0, from: p.pos, mid: p.pos, to: p.pos };
-    ng.turn = (ng.turn + 1) % ng.players.length; return ng;
+    ng.turn = nextTurn(ng, ng.turn); return ng;
   }
   function pById(g, id) { for (var i = 0; i < g.players.length; i++) if (g.players[i].id === id) return g.players[i]; return null; }
   function moveText(g, m) {
     var p = pById(g, m.pid), n = p ? p.name : '?', th = g.theme;
     if (m.skip) return n + ' dilewati.';
+    if (m.join || m.leave || m.cont) return m.text || '';
     if (m.theme) return 'Tema diganti jadi ' + th.name + '. Giliran ' + g.players[g.turn].name + '.';
     var s = n + ' dapat ' + m.roll + '.';
     if (m.stay) s += ' Harus pas di 100, tetap di ' + m.from + '.';
@@ -199,7 +218,8 @@
     else if (m.via === 'snake') s = n + ' dapat ' + m.roll + ', kena ' + th.snakeName + ' ' + m.mid + ' → ' + m.to + '.';
     else if (m.bounced) s += ' Kelewatan, mantul ke ' + m.to + '.';
     else s += ' Maju ke ' + m.to + '.';
-    if (m.roll === 6 && g.rules && g.rules.six && !g.winner && !m.skip) s += ' Dapat 6, main lagi!';
+    if (m.finish) s += ' Finish, juara ' + m.finish + '! 🎉';
+    else if (m.roll === 6 && g.rules && g.rules.six && !g.winner && !m.skip) s += ' Dapat 6, main lagi!';
     return s;
   }
 
@@ -218,7 +238,7 @@
   }
   var TS = { '.sv': 'timestamp' };
   var R = { code: null, data: null, es: null, chatKeys: {} };
-  function stopListen() { if (R.es) { R.es.close(); R.es = null; } }
+  function stopListen() { if (R.es) { R.es.close(); R.es = null; } clearInterval(R.beatT); R.beatT = null; R.lastSum = ''; }
   function listenRoom(code) {
     stopListen(); R.code = code; R.data = null; R.chatKeys = {};
     var es = new EventSource(dbUrl('rooms/' + code));
@@ -258,6 +278,9 @@
     var d = R.data;
     if (!d) { if (current === 'lobby' || current === 'game') { toast('Room sudah ditutup'); leaveRoom(true); } return; }
     G.isHost = d.host === me.uid;
+    if (G.isHost) { hostBeat(false); if (!R.beatT) R.beatT = setInterval(function () { hostBeat(true); }, 25000); }
+    if (G.isHost && d.status === 'play' && (d.joinReq || d.leaveReq) && current === 'game' && !G.busy && !G.rolling) processRequests();
+    if (G.joinPending && d.game && d.game.players && d.game.players.some(function (p) { return p.uid === me.uid; })) { G.joinPending = false; toast('Kamu sudah masuk, selamat main!'); }
     if (d.status === 'play' && d.game) {
       if (current !== 'game') { G.mode = 'online'; showGame(d.game); }
       else receiveGame(d.game);
@@ -270,7 +293,7 @@
   //  NAVIGASI LAYAR
   // =====================================================================
   var current = '';
-  function go(name) { current = name; window.scrollTo(0, 0); }
+  function go(name) { current = name; if (name !== 'home') stopLobby(); window.scrollTo(0, 0); }
 
   // ---------- BERANDA ----------
   function showHome() {
@@ -282,6 +305,7 @@
     var h = '<div class="screen">';
     h += '<div class="row" style="justify-content:flex-end;margin-bottom:-14px"><button class="icon-btn" id="btnSet" aria-label="Pengaturan">' + I.gear + '</button></div>';
     h += '<div class="logo"><svg width="64" height="64" viewBox="0 0 64 64" aria-hidden="true"><rect x="4" y="4" width="56" height="56" rx="14" fill="#1F8A5B"/><rect x="18" y="10" width="5" height="44" rx="2" fill="#FFE7A8"/><rect x="41" y="10" width="5" height="44" rx="2" fill="#FFE7A8"/><rect x="20" y="18" width="24" height="4" fill="#FFE7A8"/><rect x="20" y="30" width="24" height="4" fill="#FFE7A8"/><rect x="20" y="42" width="24" height="4" fill="#FFE7A8"/><path d="M50 14 C 30 22, 46 36, 24 46 S 12 56, 14 58" stroke="#E04A3F" stroke-width="6" fill="none" stroke-linecap="round"/><circle cx="50" cy="14" r="5" fill="#E04A3F"/></svg><h1>Ular Tangga</h1><p>Main sendiri atau bareng sampai 6 orang</p></div>';
+    h += '<div id="liveRooms" style="display:flex;flex-direction:column;gap:8px"></div>';
     if (local && local.game && !local.game.winner) h += '<button class="btn dark" id="btnResume">Lanjutkan permainan tadi</button>';
     if (lastRoom && !q) h += '<button class="btn dark" id="btnBackRoom">Kembali ke Room ' + esc(lastRoom) + '</button>';
     // nama
@@ -305,6 +329,7 @@
     lt.forEach(function (l) { h += '<button type="button" data-lt="' + l[0] + '" class="' + (S.layoutType === l[0] ? 'on' : '') + '" style="min-height:56px"><b style="font-size:13px">' + l[1] + '</b><span style="font-size:10px">' + l[2] + '</span></button>'; });
     h += '</div></div>';
     h += '<div class="card" style="display:flex;flex-direction:column;gap:6px"><label class="row" style="min-height:36px"><input type="checkbox" id="rSix" style="width:22px;height:22px;accent-color:var(--accent)"' + (S.rules.six ? ' checked' : '') + '> <span>Dapat 6 = main lagi</span></label><label class="row" style="min-height:36px"><input type="checkbox" id="rExact" style="width:22px;height:22px;accent-color:var(--accent)"' + (S.rules.exact ? ' checked' : '') + '> <span>Harus pas di 100 (kalau tidak, mantul balik)</span></label></div>';
+    if (S.mode !== 'satu') h += '<label class="row card" style="min-height:52px"><input type="checkbox" id="rPub" style="width:22px;height:22px;accent-color:var(--accent)"' + (S.pub ? ' checked' : '') + '> <span>' + (S.mode === 'bot' ? 'Teman boleh ikut gabung (tampil di halaman awal)' : 'Tampilkan room di halaman awal') + '</span></label>';
     h += '<button class="btn" id="btnStart">' + (S.mode === 'online' ? 'Buat Room' : 'Mulai Main') + '</button>';
     // gabung
     h += '<div class="card" style="display:flex;flex-direction:column;gap:8px"><label class="label" for="joinCode" style="color:#5A6478">Gabung room teman</label><div class="row"><input class="input grow" id="joinCode" inputmode="numeric" maxlength="4" placeholder="Kode 4 angka" value="' + esc(q) + '"><button class="btn small dark" id="btnJoin" style="height:48px">Gabung</button></div></div>';
@@ -319,6 +344,8 @@
     $$('[data-lt]').forEach(function (b) { b.onclick = function () { S.layoutType = b.dataset.lt; if (S.layoutType === 'acak') S.seed = Date.now() & 0x7fffffff; saveS(); $$('[data-lt]').forEach(function (x) { x.classList.toggle('on', x === b); }); }; });
     $('#rSix').onchange = function (e) { S.rules.six = e.target.checked; saveS(); };
     $('#rExact').onchange = function (e) { S.rules.exact = e.target.checked; saveS(); };
+    var rp = $('#rPub'); if (rp) rp.onchange = function (e) { S.pub = e.target.checked; saveS(); };
+    listenLobby();
     $('#btnTheme').onclick = function () { showTheme(function () { showHome(); }); };
     $('#btnStart').onclick = startFromHome;
     $('#btnJoin').onclick = function () { joinRoom($('#joinCode').value.trim()); };
@@ -349,6 +376,7 @@
   function startFromHome() {
     if (needName()) return;
     if (S.mode === 'online') { createRoom(); return; }
+    if (S.mode === 'bot' && S.pub) { createRoom({ bots: S.count - 1, start: true }); return; }
     var ps = [];
     for (var i = 0; i < S.count; i++) {
       if (i === 0) ps.push({ id: 'p0', name: me.name, photo: me.photo });
@@ -460,7 +488,7 @@
       '<label class="sr" for="sKey">API key Gemini</label><input class="input" id="sKey" type="password" autocomplete="off" placeholder="Tempel API key" value="' + esc(LS.get('gemini', '')) + '">' +
       '<button class="btn small dark" id="sTest" type="button">Tes key</button><span id="sTestRes" style="font-size:13px;font-weight:700"></span>' +
       '<label style="font-size:13px;font-weight:700" for="sModel">Model (biarkan kosong: game memilih model Flash terbaru otomatis)</label><input class="input" id="sModel" placeholder="' + esc(CFG.GEMINI_MODEL) + '" value="' + esc(LS.get('geminiModel', '')) + '"></div>' +
-      '<button class="btn" id="sSave">Simpan</button><span style="font-size:11px;color:var(--muted);text-align:center">Versi game: 20261025e</span></div>';
+      '<button class="btn" id="sSave">Simpan</button><span style="font-size:11px;color:var(--muted);text-align:center">Versi game: 20261025g</span></div>';
     document.body.appendChild(m);
     function close() { m.remove(); }
     $('#sClose', m).onclick = close; m.onclick = function (e) { if (e.target === m) close(); };
@@ -500,21 +528,32 @@
       Object.keys(idx).forEach(function (code) { if (now - idx[code] > 36 * 3600 * 1000) { db('rooms/' + code, 'DELETE').catch(function () { }); db('index/' + code, 'DELETE').catch(function () { }); } });
     }).catch(function () { });
   }
-  function createRoom() {
-    var btn = $('#btnStart'); if (btn) { btn.disabled = true; btn.textContent = 'Membuat room…'; }
+  function createRoom(opt) {
+    opt = opt || {};
+    var btn = $('#btnStart'), btnTxt = btn ? btn.textContent : ''; if (btn) { btn.disabled = true; btn.textContent = opt.start ? 'Menyiapkan…' : 'Membuat room…'; }
     cleanupOld();
     var tries = 0;
     function attempt() {
       var code = String(1000 + Math.floor(Math.random() * 9000));
       return db('rooms/' + code + '/host').then(function (ex) {
         if (ex != null && tries++ < 8) return attempt();
-        var pl = {}; pl[me.uid] = { name: me.name, photo: me.photo || '', joined: TS };
-        return db('rooms/' + code, 'PUT', { created: TS, host: me.uid, status: 'lobby', max: S.count, settings: { theme: S.theme, layoutType: S.layoutType, seed: S.seed, rules: S.rules }, players: pl })
+        var pl = {}, now = Date.now(); pl[me.uid] = { name: me.name, photo: me.photo || '', joined: now };
+        var room = { created: TS, host: me.uid, status: 'lobby', open: !!S.pub, max: opt.start ? 6 : S.count, settings: { theme: S.theme, layoutType: S.layoutType, seed: S.seed, rules: S.rules }, players: pl };
+        if (opt.start) {
+          var ps = [{ id: me.uid, uid: me.uid, name: me.name, photo: me.photo || '' }];
+          for (var i = 1; i <= (opt.bots || 0); i++) { var bid = 'bot' + i; pl[bid] = { name: 'Bot ' + i, bot: true, joined: now + i }; ps.push({ id: bid, uid: bid, name: 'Bot ' + i, bot: true }); }
+          room.status = 'play'; room.game = newGame(ps, S.theme, currentLayout(), clone(S.rules));
+        }
+        return db('rooms/' + code, 'PUT', room)
           .then(function () { return db('index/' + code, 'PUT', TS); }).then(function () { return code; });
       });
     }
     attempt().then(function (code) { openRoom(code); })
-      .catch(function (e) { toast('Gagal membuat room: ' + e.message, 4000); if (btn) { btn.disabled = false; btn.textContent = 'Buat Room'; } });
+      .catch(function (e) {
+        if (btn) { btn.disabled = false; btn.textContent = btnTxt; }
+        if (opt.start) { toast('Tidak tersambung ke internet, main offline saja', 3500); S.pub = false; startFromHome(); S.pub = LS.get('pub', true); }
+        else toast('Gagal membuat room: ' + e.message, 4000);
+      });
   }
   function joinRoom(code, resume) {
     if (!/^\d{4}$/.test(code)) { toast('Kode room 4 angka'); return; }
@@ -522,7 +561,15 @@
     db('rooms/' + code).then(function (d) {
       if (!d) { toast('Room ' + code + ' tidak ditemukan'); LS.del('room'); if (resume) showHome(); return; }
       var ps = d.players || {}, inRoom = !!ps[me.uid];
-      if (!inRoom && d.status === 'play') { toast('Permainan sudah mulai, kamu ikut menonton'); openRoom(code); return; }
+      if (!inRoom && d.status === 'play') {
+        var gp = (d.game && d.game.players) || [];
+        if (gp.some(function (p) { return p.uid === me.uid; })) { openRoom(code); return; }
+        if (d.game && !d.game.winner && (gp.some(function (p) { return p.bot; }) || gp.length < 6)) {
+          G.joinPending = true;
+          return db('rooms/' + code + '/joinReq/' + me.uid, 'PUT', { name: me.name, photo: me.photo || '', t: TS }).then(function () { toast('Minta masuk ke permainan…'); openRoom(code); });
+        }
+        toast(d.game && d.game.winner ? 'Permainan sudah selesai, kamu menonton dulu' : 'Kursi penuh, kamu ikut menonton'); openRoom(code); return;
+      }
       if (!inRoom && Object.keys(ps).length >= (d.max || 6)) { toast('Room penuh'); return; }
       var upd = inRoom ? { name: me.name, photo: me.photo || '' } : { name: me.name, photo: me.photo || '', joined: TS };
       return db('rooms/' + code + '/players/' + me.uid, 'PATCH', upd).then(function () { openRoom(code); });
@@ -534,7 +581,10 @@
     listenRoom(code); showLobby();
   }
   function leaveRoom(silent) {
-    var code = R.code; stopListen();
+    var code = R.code;
+    if (code && R.data && R.data.status === 'play' && G.game && !silent) leavePlaying(code);
+    if (code && G.isHost && R.data && R.data.status === 'lobby') db('lobby/' + code, 'DELETE').catch(function () { });
+    stopListen();
     if (code && R.data && R.data.status === 'lobby' && R.data.players && R.data.players[me.uid]) db('rooms/' + code + '/players/' + me.uid, 'DELETE').catch(function () { });
     R.code = null; R.data = null; LS.del('room'); G.video = null; G.game = null;
     try { history.replaceState(null, '', location.pathname); } catch (e) { }
@@ -589,6 +639,90 @@
     db('rooms/' + R.code + '/game', 'PUT', g).then(function () { return db('rooms/' + R.code, 'PATCH', { status: 'play' }); }).catch(function (e) { toast('Gagal mulai: ' + e.message); });
   }
 
+  // ---------- ROOM AKTIF DI HALAMAN AWAL ----------
+  var LB = { es: null, t: null, skew: 0, data: null };
+  function syncTime() { return db('time/' + me.uid, 'PUT', TS).then(function (v) { if (typeof v === 'number') LB.skew = v - Date.now(); }).catch(function () { }); }
+  function serverNow() { return Date.now() + LB.skew; }
+  function stopLobby() { if (LB.es) { LB.es.close(); LB.es = null; } clearInterval(LB.t); LB.t = null; }
+  function listenLobby() {
+    stopLobby(); if (!DBU) return;
+    function refresh() { db('lobby').then(function (d) { LB.data = d || {}; renderLiveRooms(); }).catch(function () { }); }
+    syncTime().then(refresh);
+    try { LB.es = new EventSource(dbUrl('lobby')); var deb; LB.es.addEventListener('put', function () { clearTimeout(deb); deb = setTimeout(refresh, 300); }); LB.es.addEventListener('patch', function () { clearTimeout(deb); deb = setTimeout(refresh, 300); }); } catch (e) { }
+    LB.t = setInterval(renderLiveRooms, 15000);
+  }
+  function renderLiveRooms() {
+    var el = $('#liveRooms'); if (!el || current !== 'home') return;
+    var d = LB.data || {}, now = serverNow();
+    var list = Object.keys(d).map(function (k) { var x = d[k] || {}; x.code = k; return x; })
+      .filter(function (x) { return x.open !== false && x.alive && now - x.alive < 80000 && (x.status === 'lobby' || x.status === 'play'); })
+      .sort(function (a, b) { return b.alive - a.alive; }).slice(0, 8);
+    if (!list.length) { el.innerHTML = ''; return; }
+    var h = '<span class="label">Room yang sedang aktif</span>';
+    list.forEach(function (x) {
+      var who = x.status === 'play' ? 'Sedang main · ' + (x.n || 0) + ' orang' + (x.bots ? ' + ' + x.bots + ' bot' : '') : 'Menunggu pemain · ' + (x.n || 0) + '/' + (x.max || 6);
+      var mine = x.uids && x.uids.indexOf(me.uid) >= 0;
+      h += '<div class="prow" style="padding:10px 12px"><span class="dot" style="background:' + (x.status === 'play' ? '#1F9D55' : '#E8B21E') + ';width:14px;height:14px"></span><div class="grow" style="min-width:0"><div style="font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.hostName || 'Room') + ' · ' + esc(x.theme || '') + '</div><div style="font-size:12px;font-weight:700;color:#4A5468">' + esc(who) + ' · kode ' + esc(x.code) + '</div></div><button class="btn small" data-join="' + esc(x.code) + '" style="height:42px">' + (mine ? 'Kembali' : 'Gabung') + '</button></div>';
+    });
+    el.innerHTML = h;
+    $$('[data-join]', el).forEach(function (b) { b.onclick = function () { joinRoom(b.dataset.join); }; });
+  }
+  // tuan rumah memperbarui ringkasan room (dan detak "masih hidup")
+  function hostBeat(force) {
+    var d = R.data; if (!d || !R.code || !G.isHost) return;
+    if (d.open === false) { if (!R.lastSum) { R.lastSum = 'closed'; db('lobby/' + R.code, 'DELETE').catch(function () { }); } return; }
+    var gp = d.status === 'play' && d.game ? d.game.players : roomPlayers(d);
+    var hostP = (d.players || {})[d.host] || {};
+    var sum = { hostName: hostP.name || me.name, theme: ((d.status === 'play' && d.game ? d.game.theme : (d.settings || {}).theme) || {}).name || '', status: d.game && d.game.winner ? 'done' : d.status,
+      n: gp.filter(function (p) { return !p.bot; }).length, bots: gp.filter(function (p) { return p.bot; }).length, max: d.max || 6, open: true,
+      uids: gp.filter(function (p) { return !p.bot; }).map(function (p) { return p.uid || p.id; }) };
+    var key = JSON.stringify(sum);
+    if (!force && key === R.lastSum) return;
+    R.lastSum = key; sum.alive = TS;
+    db('lobby/' + R.code, 'PUT', sum).catch(function () { R.lastSum = ''; });
+  }
+  // permintaan masuk / keluar di tengah permainan, diproses HP tuan rumah satu per satu
+  function processRequests() {
+    var d = R.data, g = G.game; if (!d || !g || G.busy || G.rolling) return false;
+    var jr = d.joinReq || {}, lr = d.leaveReq || {}, ju = Object.keys(jr)[0], lu = Object.keys(lr)[0];
+    if (lu) {
+      db('rooms/' + R.code + '/leaveReq/' + lu, 'DELETE').catch(function () { });
+      var ng = clone(g), p = ng.players.filter(function (x) { return x.uid === lu; })[0];
+      if (!p) return false;
+      p.bot = true; p.uid = 'bot_' + p.id; var nm = p.name; p.name = (nm + ' (bot)').slice(0, 16);
+      ng.seq = g.seq + 1; ng.move = { seq: ng.seq, pid: p.id, leave: true, text: nm + ' keluar, kursinya diganti bot.', roll: 0, from: 0, mid: 0, to: 0 };
+      commit(ng); return true;
+    }
+    if (ju) {
+      var info = jr[ju] || {}; db('rooms/' + R.code + '/joinReq/' + ju, 'DELETE').catch(function () { });
+      if (g.winner || g.players.some(function (x) { return x.uid === ju; })) return false;
+      var n2 = clone(g), bot = n2.players.filter(function (x) { return x.bot && !isDone(n2, x.id); })[0], txt, pid;
+      var nmj = String(info.name || 'Pemain').slice(0, 16);
+      if (bot) { txt = nmj + ' masuk menggantikan ' + bot.name + ' di kotak ' + bot.pos + '!'; bot.uid = ju; bot.name = nmj; bot.bot = false; bot.photo = info.photo || ''; pid = bot.id; }
+      else if (n2.players.length < 6) {
+        var used = n2.players.map(function (x) { return x.color; }), col = COLORS.filter(function (c) { return used.indexOf(c) < 0; })[0] || COLORS[n2.players.length % 6];
+        n2.players.push({ id: ju, uid: ju, name: nmj, color: col, bot: false, photo: info.photo || '', pos: 0 }); pid = ju; txt = nmj + ' ikut main dari kotak awal!';
+      } else return false;
+      n2.seq = g.seq + 1; n2.move = { seq: n2.seq, pid: pid, join: true, text: txt, roll: 0, from: 0, mid: 0, to: 0 };
+      commit(n2); return true;
+    }
+    return false;
+  }
+  // keluar saat permainan berjalan: tamu minta diganti bot; tuan rumah menyerahkan peran ke pemain lain
+  function leavePlaying(code) {
+    var g = G.game; if (!g || g.winner) return;
+    var mine = g.players.filter(function (p) { return p.uid === me.uid; })[0]; if (!mine) return;
+    if (!G.isHost) { db('rooms/' + code + '/leaveReq/' + me.uid, 'PUT', true).catch(function () { }); return; }
+    var ng = clone(g), p = ng.players.filter(function (x) { return x.uid === me.uid; })[0], nm = p.name;
+    p.bot = true; p.uid = 'bot_' + p.id; p.name = (nm + ' (bot)').slice(0, 16);
+    ng.seq = g.seq + 1; ng.move = { seq: ng.seq, pid: p.id, leave: true, text: nm + ' keluar, kursinya diganti bot.', roll: 0, from: 0, mid: 0, to: 0 };
+    var heir = ng.players.filter(function (x) { return !x.bot && x.uid !== me.uid; })[0];
+    db('rooms/' + code + '/game', 'PUT', ng).then(function () {
+      if (heir) return db('rooms/' + code, 'PATCH', { host: heir.uid });
+      return db('lobby/' + code, 'DELETE');
+    }).catch(function () { });
+  }
+
   // =====================================================================
   //  LAYAR PERMAINAN
   // =====================================================================
@@ -625,13 +759,15 @@
     g.theme = TH.sanitizeTheme(g.theme); g.rules = g.rules || {}; g.seq = g.seq || 0;
     g.layout.ladders = g.layout.ladders || []; g.layout.snakes = g.layout.snakes || [];
     g.players.forEach(function (p) { p.pos = p.pos || 0; });
+    g.finished = g.finished || [];
   }
   function renderPlayers() {
     var g = G.game, el = $('#gPlayers'); if (!el) return;
     var cur = g.players[g.turn];
     el.style.gridTemplateColumns = window.innerWidth >= 760 ? '' : 'repeat(' + Math.min(g.players.length, 6) + ',minmax(0,1fr))';
     el.innerHTML = g.players.map(function (p) {
-      return '<div class="pcard' + (!g.winner && p.id === cur.id ? ' turn' : '') + '" style="--pc:' + p.color + '"><span class="dot" style="background:' + p.color + (p.photo ? ';background-image:url(' + esc(p.photo) + ')' : '') + '"></span><span class="nm">' + esc(p.name) + (online() && p.uid === me.uid ? ' (kamu)' : '') + '</span><span class="ps">' + (p.bot ? 'Bot · ' : '') + 'Kotak ' + (G.disp[p.id] || 0) + '</span></div>';
+      var fi = (g.finished || []).indexOf(p.id);
+      return '<div class="pcard' + (!g.winner && !g.ask && p.id === cur.id ? ' turn' : '') + '" style="--pc:' + p.color + '"><span class="dot" style="background:' + p.color + (p.photo ? ';background-image:url(' + esc(p.photo) + ')' : '') + '"></span><span class="nm">' + esc(p.name) + (online() && p.uid === me.uid ? ' (kamu)' : '') + '</span><span class="ps">' + (fi >= 0 ? ['🥇', '🥈', '🥉'][fi] || '🏅' : '') + (fi >= 0 ? ' Juara ' + (fi + 1) : (p.bot ? 'Bot · ' : '') + 'Kotak ' + (G.disp[p.id] || 0)) + '</span></div>';
     }).join('');
   }
   var OFFS = [[[0, 0]], [[-22, -14], [22, 14]], [[-24, -22], [24, -22], [0, 22]], [[-24, -24], [24, -24], [-24, 24], [24, 24]], [[-26, -26], [26, -26], [0, 0], [-26, 26], [26, 26]], [[-28, -24], [0, -24], [28, -24], [-28, 24], [0, 24], [28, 24]]];
@@ -644,8 +780,9 @@
     var cur = g.players[g.turn];
     g.players.forEach(function (p) {
       var el = $('#tok-' + cssId(p.id), layer);
+      if (el && el.getAttribute('data-nm') !== p.name) { el.remove(); el = null; }
       if (!el) {
-        el = document.createElementNS('http://www.w3.org/2000/svg', 'g'); el.setAttribute('class', 'tok'); el.id = 'tok-' + cssId(p.id);
+        el = document.createElementNS('http://www.w3.org/2000/svg', 'g'); el.setAttribute('class', 'tok'); el.id = 'tok-' + cssId(p.id); el.setAttribute('data-nm', p.name);
         var lb = tokLabel(p.name), fs = [34, 34, 30, 26, 22, 19, 17][Math.min(lb.length, 6)];
         el.innerHTML = '<circle class="ring" r="48" fill="none" stroke="' + p.color + '" stroke-width="7" style="display:none"/><circle r="40" cy="3" fill="rgba(0,0,0,.28)"/><circle r="38" fill="' + p.color + '" stroke="#fff" stroke-width="5"/><text y="' + Math.round(fs * 0.36) + '" text-anchor="middle" font-size="' + fs + '" font-weight="800" font-family="Nunito,sans-serif" fill="#fff" stroke="rgba(0,0,0,.45)" stroke-width="3.5" paint-order="stroke">' + esc(lb) + '</text>';
         layer.appendChild(el);
@@ -654,7 +791,7 @@
       var xy = cellXY(pos), x = xy[0] + off[0], y = xy[1] + off[1], sc = GSCALE[Math.min(grp.length, 6) - 1];
       el.classList.toggle('slide', slideId === p.id);
       el.setAttribute('transform', 'translate(' + x + ' ' + y + ') scale(' + sc + ')'); el.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + sc + ')';
-      el.querySelector('.ring').style.display = (!g.winner && cur && cur.id === p.id && !G.busy) ? '' : 'none';
+      el.querySelector('.ring').style.display = (!g.winner && !g.ask && cur && cur.id === p.id && !G.busy) ? '' : 'none';
     });
     // token pemain yang sedang jalan selalu di paling atas
     if (slideId) { var top = $('#tok-' + cssId(slideId), layer); if (top) layer.appendChild(top); }
@@ -662,7 +799,7 @@
   function cssId(s) { return String(s).replace(/[^a-zA-Z0-9_-]/g, '_'); }
   function setMsg(t, icon) { G.msg = t; var el = $('#gMsg'); if (el) el.innerHTML = (icon || I.info) + '<span>' + esc(t) + '</span>'; }
   function myTurn() {
-    var g = G.game; if (!g || g.winner) return false; var p = g.players[g.turn]; if (p.bot) return false;
+    var g = G.game; if (!g || g.winner || g.ask) return false; var p = g.players[g.turn]; if (p.bot || isDone(g, p.id)) return false;
     if (online()) return p.uid === me.uid;
     return true;
   }
@@ -670,7 +807,9 @@
     var g = G.game, b = $('#gRoll'), t = $('#gTurn'); if (!b || !g) return;
     var p = g.players[g.turn];
     if (g.winner) { b.disabled = true; b.textContent = 'Selesai'; t.innerHTML = ''; return; }
+    if (g.ask) { b.disabled = true; b.textContent = 'Menunggu pilihan…'; t.innerHTML = ''; return; }
     t.innerHTML = 'Giliran <span style="color:' + p.color + ';filter:brightness(.85)">' + esc(p.name) + '</span>';
+    if (online() && !g.players.some(function (x) { return x.uid === me.uid; })) { b.disabled = true; b.textContent = G.joinPending ? 'Menunggu masuk…' : 'Kamu menonton'; return; }
     var can = myTurn() && !G.busy && !G.rolling;
     b.disabled = !can;
     b.textContent = myTurn() ? 'Kocok Dadu' : (p.bot ? p.name + ' jalan…' : 'Tunggu ' + p.name + '…');
@@ -703,7 +842,7 @@
     G.queue.push(g); pump();
   }
   // ---------- NOTIFIKASI GILIRAN (online) ----------
-  function turnUid(g) { var p = g && !g.winner ? g.players[g.turn] : null; return p && !p.bot ? p.uid : ''; }
+  function turnUid(g) { var p = g && !g.winner && !g.ask ? g.players[g.turn] : null; return p && !p.bot ? p.uid : ''; }
   function checkTurnAlert(g) {
     if (!online()) return;
     var mineNow = turnUid(g) === me.uid, prev = G.lastTurnUid; G.lastTurnUid = turnUid(g);
@@ -758,6 +897,8 @@
     var m = g.move, d = $('#gDice');
     return (async function () {
       if (m.skip || m.theme) { await sleep(200); return; }
+      if (m.cont) { await sleep(200); return; }
+      if (m.join || m.leave) { addSys(m.text || ''); if (m.join) SFX.ping(); await sleep(250); return; }
       d.innerHTML = diceSVG(m.roll); d.classList.remove('roll'); void d.offsetWidth; d.classList.add('roll'); SFX.dice();
       await sleep(600);
       var path = [], i;
@@ -778,8 +919,10 @@
   function afterSettle() {
     var g = G.game; if (!g || current !== 'game' || G.busy) return;
     if (G.pendingTheme && !G.rolling) { applyPendingTheme(); return; }
+    if (online() && G.isHost && !G.rolling && R.data && (R.data.joinReq || R.data.leaveReq) && processRequests()) return;
     if (G.pendingTurnAlert && myTurn()) turnAlertNow();
     if (g.winner) { if (G.winShown !== g.started) { G.winShown = g.started; setTimeout(showWin, 500); } return; }
+    if (g.ask) { if (G.askShown !== g.started + ':' + g.seq) { G.askShown = g.started + ':' + g.seq; setTimeout(showAsk, 500); } return; }
     var p = g.players[g.turn];
     if (p.bot && (!online() || G.isHost) && G.botSeq !== g.seq) {
       G.botSeq = g.seq; var seq = g.seq;
@@ -866,18 +1009,46 @@
   }
 
   // ---------- MENANG ----------
+  function rankOf(g) {
+    var fin = g.finished || (g.winner ? [g.winner] : []);
+    return g.players.slice().sort(function (a, b) {
+      var fa = fin.indexOf(a.id), fb = fin.indexOf(b.id);
+      if (fa >= 0 || fb >= 0) return (fa < 0 ? 99 : fa) - (fb < 0 ? 99 : fb);
+      return b.pos - a.pos;
+    });
+  }
+  function rankRows(g, rank) {
+    var fin = g.finished || [];
+    return rank.map(function (p, i) { var fi = fin.indexOf(p.id); return '<div class="prow"><span class="no">' + (i + 1) + '</span><span class="dot" style="width:22px;height:22px;background:' + p.color + '"></span><span class="grow" style="font-weight:800;text-align:left">' + esc(p.name) + '</span><span style="font-weight:700;color:#4A5468;font-size:13px">' + (fi >= 0 ? (['🥇', '🥈', '🥉'][fi] || '🏅') + ' finish' : 'kotak ' + p.pos) + '</span></div>'; }).join('');
+  }
+  // ada yang finish, pemain tersisa masih 2+: lanjut atau game baru?
+  function showAsk() {
+    var g = G.game; if (!g || !g.ask || current !== 'game') return;
+    var fin = g.finished || [], last = pById(g, fin[fin.length - 1]); if (!last) return;
+    SFX.ladder();
+    var can = !online() || G.isHost, left = g.players.length - fin.length;
+    var m = document.createElement('div'); m.className = 'modal';
+    m.innerHTML = '<div class="sheet win" role="dialog" aria-label="Ada yang finish"><div style="font-size:54px;line-height:1">🎉</div><h2 style="font-size:32px">' + esc(last.name) + ' juara ' + fin.length + '!</h2>' +
+      '<span style="color:#C9D1E3;font-weight:700">Masih ada ' + left + ' pemain di papan. Lanjut rebutan juara ' + (fin.length + 1) + ' sampai tinggal 1, atau mulai game baru?</span>' +
+      '<div class="rank"><span class="label" style="color:#5A6478">Sementara</span>' + rankRows(g, rankOf(g)) + '</div>' +
+      (can ? '<button class="btn" data-a="cont" style="width:100%">Lanjut sampai tinggal 1</button><button class="btn ghost" data-a="new" style="width:100%;color:#fff;border-color:#5A6A8C">Main game baru</button>'
+        : '<div style="font-weight:700;color:#C9D1E3">Menunggu tuan rumah memilih…</div>') + '</div>';
+    document.body.appendChild(m);
+    m.onclick = function (e) { var a = e.target.closest('[data-a]'); if (!a) return; m.remove(); if (a.dataset.a === 'cont') continueGame(); else restartGame(); };
+    var key = g.started + ':' + g.seq, iv = setInterval(function () { if (!document.body.contains(m)) return clearInterval(iv); if (!G.game || G.game.started + ':' + G.game.seq !== key) { m.remove(); clearInterval(iv); } }, 400);
+  }
   function showWin() {
     var g = G.game, w = pById(g, g.winner); if (!w) return;
     SFX.win(); buzz([80, 60, 80, 60, 200]);
     var cf = document.createElement('div'); cf.className = 'confetti';
     for (var i = 0; i < 70; i++) { var c = document.createElement('i'); c.style.left = Math.random() * 100 + '%'; c.style.background = COLORS[i % 6]; c.style.animationDuration = (2 + Math.random() * 2.5) + 's'; c.style.animationDelay = Math.random() * 0.8 + 's'; cf.appendChild(c); }
     document.body.appendChild(cf); setTimeout(function () { cf.remove(); }, 6000);
-    var rank = g.players.slice().sort(function (a, b) { return (b.id === g.winner) - (a.id === g.winner) || b.pos - a.pos; });
+    var rank = rankOf(g), multi = (g.finished || []).length > 1;
     var canRestart = !online() || G.isHost;
     var m = document.createElement('div'); m.className = 'modal';
     m.innerHTML = '<div class="sheet win" role="dialog" aria-label="Pemenang"><svg width="96" height="96" viewBox="0 0 120 120" aria-hidden="true"><path d="M30 18h60v28c0 20-13 34-30 34S30 66 30 46z" fill="#F7C548"/><path d="M30 26H14c0 18 8 28 20 30M90 26h16c0 18-8 28-20 30" fill="none" stroke="#F7C548" stroke-width="7" stroke-linecap="round"/><rect x="52" y="78" width="16" height="16" fill="#E0A82A"/><rect x="36" y="94" width="48" height="14" rx="4" fill="#F7C548"/><path d="M60 32l5 10 11 1.5-8 7.5 2 11-10-5.5-10 5.5 2-11-8-7.5 11-1.5z" fill="#fff"/></svg>' +
-      '<span style="color:#C9D1E3;font-weight:700">Sampai kotak 100 duluan!</span><h2>' + esc(w.name) + ' Menang!</h2>' +
-      '<div class="rank"><span class="label" style="color:#5A6478">Peringkat</span>' + rank.map(function (p, i) { return '<div class="prow"><span class="no">' + (i + 1) + '</span><span class="dot" style="width:22px;height:22px;background:' + p.color + '"></span><span class="grow" style="font-weight:800;text-align:left">' + esc(p.name) + '</span><span style="font-weight:700;color:#4A5468;font-size:13px">' + p.pos + '</span></div>'; }).join('') + '</div>' +
+      (multi ? '<span style="color:#C9D1E3;font-weight:700">Juara 1: ' + esc(w.name) + '</span><h2 style="font-size:32px">Permainan Selesai!</h2>' : '<span style="color:#C9D1E3;font-weight:700">Sampai kotak 100 duluan!</span><h2>' + esc(w.name) + ' Menang!</h2>') +
+      '<div class="rank"><span class="label" style="color:#5A6478">Peringkat</span>' + rankRows(g, rank) + '</div>' +
       (canRestart ? '<button class="btn" data-a="again" style="width:100%">Main Lagi</button>' : '<div style="font-weight:700;color:#C9D1E3">Menunggu tuan rumah memulai lagi…</div>') +
       '<button class="btn ghost" data-a="home" style="width:100%;color:#fff;border-color:#5A6A8C">' + (online() ? 'Lihat papan' : 'Ke Menu Utama') + '</button></div>';
     document.body.appendChild(m);
@@ -1051,7 +1222,7 @@
       'Jangan mengarang kejadian yang tidak ada di data. Hasil dadu itu acak, jangan janji bisa mengatur dadu.\n\n' +
       'KONDISI PERMAINAN\nTema papan: ' + g.theme.name + ' (tangga = ' + g.theme.ladderName + ', ular = ' + g.theme.snakeName + ')\n' +
       'Mode: ' + (online() ? 'online' : G.mode === 'bot' ? 'lawan bot' : 'satu HP gantian') + '\nPosisi pemain (finish di kotak 100):\n' + lines + '\n' +
-      'Giliran sekarang: ' + cur.name + '\n' + (g.winner ? 'Pemenang: ' + (pById(g, g.winner) || {}).name + '\n' : '') +
+      'Giliran sekarang: ' + cur.name + '\n' + ((g.finished || []).length ? 'Sudah finish: ' + g.finished.map(function (id, i) { return 'juara ' + (i + 1) + ' ' + (pById(g, id) || {}).name; }).join(', ') + '\n' : '') + (g.winner ? 'Permainan sudah selesai.\n' : '') +
       (g.move && !g.move.theme ? 'Langkah terakhir: ' + moveText(g, g.move) + '\n' : '') +
       'Tangga di: ' + g.layout.ladders.map(function (x) { return x[0] + '→' + x[1]; }).join(', ') + '\nUlar di: ' + g.layout.snakes.map(function (x) { return x[0] + '→' + x[1]; }).join(', ') + '\n\n' +
       'OBROLAN TERAKHIR\n' + recent + '\n\nPertanyaan dari ' + m.name + ': ' + m.text;
